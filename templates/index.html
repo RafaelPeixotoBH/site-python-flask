@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Meu Site Python</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>Cadastro de Usuários</h1>
+        
+        <form action="/" method="POST">
+            <input type="text" name="nome" placeholder="Digite seu nome aqui" required>
+            <button type="submit">Salvar no Banco</button>
+        </form>
+
+        <hr style="margin: 20px 0; border: 0; border-top: 1px solid #eee;">
+
+        <div style="text-align: left;">
+            <h3>Lista de Cadastrados:</h3>
+            <ul style="list-style-type: none; padding: 0;">
+                {% for usuario in usuarios %}
+                    <li style="background: #f9f9f9; padding: 10px; margin-bottom: 5px; border-radius: 4px;">
+                        👤 {{ usuario.nome }}
+                    </li>
+                {% else %}
+                    <li style="color: #888;">Nenhum usuário cadastrado ainda.</li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+</body>
+</html>
