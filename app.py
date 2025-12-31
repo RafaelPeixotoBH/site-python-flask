@@ -4,9 +4,16 @@ from flask_sqlalchemy import SQLAlchemy
 
 app = Flask(__name__)
 
-# --- CONFIGURAÇÃO DO BANCO ---
-basedir = os.path.abspath(os.path.dirname(__file__))
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'meu_banco.db')
+# --- CONFIGURAÇÃO INTELIGENTE DO BANCO ---
+# 1. Tenta pegar o endereço do banco do ambiente (Render)
+database_url = os.environ.get('DATABASE_URL')
+
+# 2. Correção necessária para o Render (bug do "postgres://")
+if database_url and database_url.startswith("postgres://"):
+    database_url = database_url.replace("postgres://", "postgresql://", 1)
+
+# 3. Se não tiver URL (estamos no PC), usa SQLite local
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url or 'sqlite:///meu_banco.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
