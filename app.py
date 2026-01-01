@@ -44,7 +44,7 @@ class User(UserMixin, db.Model): # Tabela de Admins
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
 
-# Cria o banco
+# Tenta criar o banco na inicialização (as vezes falha no Render, por isso a rota setup-banco abaixo)
 with app.app_context():
     db.create_all()
 
@@ -87,7 +87,7 @@ def logout():
     logout_user()
     return redirect(url_for('home'))
 
-# Rota de Excluir (PROTEGIDA: Só entra se tiver logado)
+# Rota de Excluir (PROTEGIDA)
 @app.route('/delete/<int:id>')
 @login_required
 def delete(id):
@@ -96,19 +96,29 @@ def delete(id):
     db.session.commit()
     return redirect(url_for('home'))
 
-# --- ROTA SECRETA PARA CRIAR ADMIN (Execute uma vez) ---
+# --- ROTA DE EMERGÊNCIA (PARA CORRIGIR O ERRO 500) ---
+@app.route('/setup-banco')
+def setup_banco():
+    try:
+        db.create_all()
+        return "Tabelas recriadas com sucesso! Agora vá para /criar-admin"
+    except Exception as e:
+        return f"Erro ao criar tabelas: {str(e)}"
+
+# Rota para Criar Admin
 @app.route('/criar-admin')
 def criar_admin():
-    # Verifica se já existe
-    if User.query.filter_by(username='admin').first():
-        return "Admin já existe!"
-    
-    # Cria o usuário admin / senha: 123
-    novo_admin = User(username='admin')
-    novo_admin.set_password('123') 
-    db.session.add(novo_admin)
-    db.session.commit()
-    return "Admin criado com sucesso! Login: admin / Senha: 123"
+    try:
+        if User.query.filter_by(username='admin').first():
+            return "Admin já existe!"
+        
+        novo_admin = User(username='admin')
+        novo_admin.set_password('123') 
+        db.session.add(novo_admin)
+        db.session.commit()
+        return "Admin criado com sucesso! Login: admin / Senha: 123"
+    except Exception as e:
+        return f"Erro ao criar admin (Verifique se rodou o /setup-banco antes): {str(e)}"
 
 if __name__ == '__main__':
     app.run(debug=True)
