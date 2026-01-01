@@ -10,7 +10,7 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'chave-secreta-mude-em-producao'
 basedir = os.path.abspath(os.path.dirname(__file__))
 
-# Configuração do Banco
+# Configuração do Banco (PostgreSQL no Render ou SQLite local)
 database_url = os.environ.get('DATABASE_URL')
 if database_url and database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
@@ -37,7 +37,7 @@ class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(30), unique=True, nullable=False)
     password_hash = db.Column(db.String(256))
-    is_admin = db.Column(db.Boolean, default=False) # NOVA COLUNA: Define se é chefe
+    is_admin = db.Column(db.Boolean, default=False) # Define se é admin ou comum
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -45,14 +45,13 @@ class User(UserMixin, db.Model):
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
 
-# --- ROTAS ---
+# --- ROTAS PRINCIPAIS ---
 
 @app.route('/', methods=['GET', 'POST'])
 def home():
     if request.method == 'POST':
-        # Apenas usuários logados podem adicionar nomes na lista
         if not current_user.is_authenticated:
-            flash('Faça login para adicionar.')
+            flash('Faça login para adicionar nomes.')
             return redirect(url_for('login'))
             
         nome_form = request.form.get('nome')
@@ -62,13 +61,10 @@ def home():
             db.session.commit()
         return redirect(url_for('home'))
 
-    try:
-        usuarios = Usuario.query.all()
-    except:
-        usuarios = []
+    usuarios = Usuario.query.all()
     return render_template('index.html', usuarios=usuarios)
 
-# --- ROTA DE LOGIN ---
+# --- LOGIN / LOGOUT ---
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
@@ -80,28 +76,28 @@ def login():
             login_user(user)
             return redirect(url_for('home'))
         else:
-            flash('Login inválido.')
+            flash('Login ou senha inválidos.')
     return render_template('login.html')
 
-# --- NOVA ROTA: CADASTRAR NOVO USUÁRIO ---
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for('home'))
+
+# --- NOVO: CADASTRO DE USUÁRIO COMUM ---
 @app.route('/registrar', methods=['GET', 'POST'])
 def registrar():
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
 
-        # 1. Verifica se já existem 100 usuários
-        total_users = User.query.count()
-        if total_users >= 101: # 1 Admin + 100 usuários
-            flash('Limite de usuários atingido! Entre em contato com o suporte.')
-            return redirect(url_for('login'))
-
-        # 2. Verifica se o nome já existe
+        # Verifica se o nome já existe
         if User.query.filter_by(username=username).first():
             flash('Este usuário já existe.')
             return redirect(url_for('registrar'))
 
-        # 3. Cria usuário COMUM (is_admin=False)
+        # Cria usuário SEMPRE como comum (is_admin=False)
         novo_user = User(username=username, is_admin=False)
         novo_user.set_password(password)
         db.session.add(novo_user)
@@ -112,7 +108,7 @@ def registrar():
 
     return render_template('registrar.html')
 
-# --- NOVA ROTA: MUDAR SENHA ---
+# --- NOVO: MUDAR SENHA ---
 @app.route('/mudar-senha', methods=['GET', 'POST'])
 @login_required
 def mudar_senha():
@@ -120,12 +116,10 @@ def mudar_senha():
         senha_atual = request.form.get('senha_atual')
         nova_senha = request.form.get('nova_senha')
 
-        # Verifica se a senha atual está certa
         if not current_user.check_password(senha_atual):
             flash('A senha atual está incorreta.')
             return redirect(url_for('mudar_senha'))
 
-        # Troca pela nova
         current_user.set_password(nova_senha)
         db.session.commit()
         flash('Senha alterada com sucesso!')
@@ -133,19 +127,12 @@ def mudar_senha():
 
     return render_template('mudar_senha.html')
 
-@app.route('/logout')
-@login_required
-def logout():
-    logout_user()
-    return redirect(url_for('home'))
-
-# --- EXCLUIR (SÓ PARA ADMIN) ---
+# --- EXCLUIR (APENAS ADMIN) ---
 @app.route('/delete/<int:id>')
 @login_required
 def delete(id):
-    # Trava de segurança no Back-end: Se não for admin, chuta fora
     if not current_user.is_admin:
-        flash("Apenas administradores podem excluir.")
+        flash("Apenas administradores podem excluir dados.")
         return redirect(url_for('home'))
 
     usuario_para_deletar = Usuario.query.get_or_404(id)
@@ -153,30 +140,22 @@ def delete(id):
     db.session.commit()
     return redirect(url_for('home'))
 
-# --- CONFIGURAÇÃO DO BANCO ---
+# --- FERRAMENTAS DE SUPORTE ---
 @app.route('/setup-banco')
 def setup_banco():
-    try:
-        db.drop_all()
-        db.create_all()
-        return "Banco RESETADO! Tabelas recriadas com suporte a Admin."
-    except Exception as e:
-        return f"Erro: {str(e)}"
+    db.drop_all()
+    db.create_all()
+    return "Banco de dados limpo e recriado!"
 
 @app.route('/criar-admin')
 def criar_admin():
-    try:
-        if User.query.filter_by(username='admin').first():
-            return "Admin já existe!"
-        
-        # Cria o ADMIN SUPREMO (is_admin=True)
-        novo_admin = User(username='admin', is_admin=True)
-        novo_admin.set_password('123') 
-        db.session.add(novo_admin)
+    if not User.query.filter_by(username='admin').first():
+        admin = User(username='admin', is_admin=True)
+        admin.set_password('123')
+        db.session.add(admin)
         db.session.commit()
-        return "Admin criado com sucesso! Login: admin / Senha: 123"
-    except Exception as e:
-        return f"Erro: {str(e)}"
+        return "Usuário Admin criado! Login: admin | Senha: 123"
+    return "Admin já existe."
 
 if __name__ == '__main__':
     with app.app_context():
