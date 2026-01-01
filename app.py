@@ -40,6 +40,12 @@ def home():
 
     usuarios = Usuario.query.all()
     return render_template('index.html', usuarios=usuarios)
-
+# --- ROTA DE EXCLUIR ---
+@app.route('/delete/<int:id>')
+def delete(id):
+    usuario_para_deletar = Usuario.query.get_or_404(id)
+    db.session.delete(usuario_para_deletar)
+    db.session.commit()
+    return redirect(url_for('home'))
 if __name__ == '__main__':
     app.run(debug=True)
