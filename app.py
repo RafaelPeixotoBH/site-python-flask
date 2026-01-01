@@ -10,7 +10,7 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'uma-chave-muito-secreta-mude-isso-em-producao'
 basedir = os.path.abspath(os.path.dirname(__file__))
 
-# Configuração do Banco (Postgres ou SQLite)
+# Configuração do Banco
 database_url = os.environ.get('DATABASE_URL')
 if database_url and database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
@@ -36,7 +36,8 @@ class Usuario(db.Model):
 class User(UserMixin, db.Model): # Tabela de Admins
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(30), unique=True, nullable=False)
-    password_hash = db.Column(db.String(128))
+    # AQUI ESTAVA O ERRO: Mudamos de 128 para 256
+    password_hash = db.Column(db.String(256))
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -44,13 +45,8 @@ class User(UserMixin, db.Model): # Tabela de Admins
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
 
-# Tenta criar o banco na inicialização (as vezes falha no Render, por isso a rota setup-banco abaixo)
-with app.app_context():
-    db.create_all()
-
 # --- ROTAS ---
 
-# Rota Home
 @app.route('/', methods=['GET', 'POST'])
 def home():
     if request.method == 'POST':
@@ -61,33 +57,36 @@ def home():
             db.session.commit()
         return redirect(url_for('home'))
 
-    usuarios = Usuario.query.all()
+    # Tenta buscar usuários, se a tabela não existir, retorna lista vazia para não dar erro
+    try:
+        usuarios = Usuario.query.all()
+    except:
+        usuarios = []
     return render_template('index.html', usuarios=usuarios)
 
-# Rota de Login
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
-        user = User.query.filter_by(username=username).first()
-        
-        if user and user.check_password(password):
-            login_user(user)
-            return redirect(url_for('home'))
-        else:
-            flash('Login inválido. Tente novamente.')
+        try:
+            user = User.query.filter_by(username=username).first()
+            if user and user.check_password(password):
+                login_user(user)
+                return redirect(url_for('home'))
+            else:
+                flash('Login inválido.')
+        except:
+            flash('Erro ao conectar no banco. Rode o /setup-banco')
             
     return render_template('login.html')
 
-# Rota de Logout
 @app.route('/logout')
 @login_required
 def logout():
     logout_user()
     return redirect(url_for('home'))
 
-# Rota de Excluir (PROTEGIDA)
 @app.route('/delete/<int:id>')
 @login_required
 def delete(id):
@@ -96,16 +95,17 @@ def delete(id):
     db.session.commit()
     return redirect(url_for('home'))
 
-# --- ROTA DE EMERGÊNCIA (PARA CORRIGIR O ERRO 500) ---
+# --- ROTA DE RESET DO BANCO (Atualizada) ---
 @app.route('/setup-banco')
 def setup_banco():
     try:
+        # Apaga as tabelas velhas (com coluna pequena) e cria as novas (com coluna grande)
+        db.drop_all()
         db.create_all()
-        return "Tabelas recriadas com sucesso! Agora vá para /criar-admin"
+        return "Banco RESETADO com sucesso! Tabelas novas criadas. Agora vá para /criar-admin"
     except Exception as e:
-        return f"Erro ao criar tabelas: {str(e)}"
+        return f"Erro ao resetar banco: {str(e)}"
 
-# Rota para Criar Admin
 @app.route('/criar-admin')
 def criar_admin():
     try:
@@ -118,7 +118,9 @@ def criar_admin():
         db.session.commit()
         return "Admin criado com sucesso! Login: admin / Senha: 123"
     except Exception as e:
-        return f"Erro ao criar admin (Verifique se rodou o /setup-banco antes): {str(e)}"
+        return f"Erro: {str(e)}"
 
 if __name__ == '__main__':
+    with app.app_context():
+        db.create_all()
     app.run(debug=True)
