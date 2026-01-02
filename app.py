@@ -92,12 +92,18 @@ def registrar():
         username = request.form.get('username')
         password = request.form.get('password')
 
-        # Verifica se o nome já existe
+        # 1. TRAVA DE SEGURANÇA: Limite de 100 Usuários
+        # Se tiver mais de 101 registros (1 admin + 100 usuarios), bloqueia.
+        if User.query.count() >= 101: 
+            flash('Limite de usuários atingido! Contate o suporte.')
+            return redirect(url_for('login'))
+
+        # 2. Verifica se o nome já existe
         if User.query.filter_by(username=username).first():
             flash('Este usuário já existe.')
             return redirect(url_for('registrar'))
 
-        # Cria usuário SEMPRE como comum (is_admin=False)
+        # 3. Cria usuário SEMPRE como comum (is_admin=False)
         novo_user = User(username=username, is_admin=False)
         novo_user.set_password(password)
         db.session.add(novo_user)
@@ -161,24 +167,27 @@ def criar_admin():
 @app.route('/dashboard')
 @login_required
 def dashboard():
+    # Verifica se é admin
     if not current_user.is_admin:
         flash("Acesso restrito ao administrador.")
         return redirect(url_for('home'))
     
+    # Calcula os dados
     total_usuarios = User.query.count()
     limite = 100
     porcentagem = min((total_usuarios / limite) * 100, 100)
     
-    # Lista todos os usuários cadastrados (exceto o admin principal se desejar)
+    # Busca a lista completa
     lista_usuarios = User.query.all()
     
+    # Envia tudo para o seu HTML
     return render_template('dashboard.html', 
                            total=total_usuarios, 
                            limite=limite, 
                            porcentagem=porcentagem,
                            lista=lista_usuarios)
-    
-    if __name__ == '__main__':
-     with app.app_context():
+
+if __name__ == '__main__':
+    with app.app_context():
         db.create_all()
     app.run(debug=True)
