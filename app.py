@@ -157,7 +157,28 @@ def criar_admin():
         return "Usuário Admin criado! Login: admin | Senha: 123"
     return "Admin já existe."
 
-if __name__ == '__main__':
-    with app.app_context():
+# --- ROTA DO DASHBOARD (SÓ PARA ADMIN) ---
+@app.route('/dashboard')
+@login_required
+def dashboard():
+    if not current_user.is_admin:
+        flash("Acesso restrito ao administrador.")
+        return redirect(url_for('home'))
+    
+    total_usuarios = User.query.count()
+    limite = 100
+    porcentagem = min((total_usuarios / limite) * 100, 100)
+    
+    # Lista todos os usuários cadastrados (exceto o admin principal se desejar)
+    lista_usuarios = User.query.all()
+    
+    return render_template('dashboard.html', 
+                           total=total_usuarios, 
+                           limite=limite, 
+                           porcentagem=porcentagem,
+                           lista=lista_usuarios)
+    
+    if __name__ == '__main__':
+     with app.app_context():
         db.create_all()
     app.run(debug=True)
