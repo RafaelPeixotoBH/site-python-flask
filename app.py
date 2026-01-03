@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, flash
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
@@ -10,7 +11,7 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'chave-secreta-mude-em-producao'
 basedir = os.path.abspath(os.path.dirname(__file__))
 
-# Configuração do Banco (PostgreSQL no Render ou SQLite local)
+# Configuração do Banco
 database_url = os.environ.get('DATABASE_URL')
 if database_url and database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
@@ -29,15 +30,28 @@ def load_user(user_id):
     return User.query.get(int(user_id))
 
 # --- MODELOS (TABELAS) ---
+
 class Usuario(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     nome = db.Column(db.String(100), nullable=False)
+
+# Tabela para guardar o histórico de cada login
+class LoginHistory(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    data_acesso = db.Column(db.DateTime, default=datetime.now) # Data/Hora automática
 
 class User(UserMixin, db.Model): 
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(30), unique=True, nullable=False)
     password_hash = db.Column(db.String(256))
-    is_admin = db.Column(db.Boolean, default=False) # Define se é admin ou comum
+    is_admin = db.Column(db.Boolean, default=False)
+    
+    # Nova coluna: Data do Cadastro
+    created_at = db.Column(db.DateTime, default=datetime.now)
+
+    # Relacionamento: Um usuário tem MUITOS históricos
+    historico_acessos = db.relationship('LoginHistory', backref='usuario', lazy=True)
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -74,6 +88,13 @@ def login():
         
         if user and user.check_password(password):
             login_user(user)
+            
+            # --- NOVO: REGISTRAR O HISTÓRICO ---
+            novo_acesso = LoginHistory(user_id=user.id)
+            db.session.add(novo_acesso)
+            db.session.commit()
+            # -----------------------------------
+
             return redirect(url_for('home'))
         else:
             flash('Login ou senha inválidos.')
@@ -85,25 +106,21 @@ def logout():
     logout_user()
     return redirect(url_for('home'))
 
-# --- NOVO: CADASTRO DE USUÁRIO COMUM ---
+# --- CADASTRO ---
 @app.route('/registrar', methods=['GET', 'POST'])
 def registrar():
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
 
-        # 1. TRAVA DE SEGURANÇA: Limite de 100 Usuários
-        # Se tiver mais de 101 registros (1 admin + 100 usuarios), bloqueia.
         if User.query.count() >= 101: 
             flash('Limite de usuários atingido! Contate o suporte.')
             return redirect(url_for('login'))
 
-        # 2. Verifica se o nome já existe
         if User.query.filter_by(username=username).first():
             flash('Este usuário já existe.')
             return redirect(url_for('registrar'))
 
-        # 3. Cria usuário SEMPRE como comum (is_admin=False)
         novo_user = User(username=username, is_admin=False)
         novo_user.set_password(password)
         db.session.add(novo_user)
@@ -114,7 +131,7 @@ def registrar():
 
     return render_template('registrar.html')
 
-# --- NOVO: MUDAR SENHA ---
+# --- MUDAR SENHA ---
 @app.route('/mudar-senha', methods=['GET', 'POST'])
 @login_required
 def mudar_senha():
@@ -133,7 +150,7 @@ def mudar_senha():
 
     return render_template('mudar_senha.html')
 
-# --- EXCLUIR (APENAS ADMIN) ---
+# --- EXCLUIR ---
 @app.route('/delete/<int:id>')
 @login_required
 def delete(id):
@@ -146,12 +163,12 @@ def delete(id):
     db.session.commit()
     return redirect(url_for('home'))
 
-# --- FERRAMENTAS DE SUPORTE ---
+# --- FERRAMENTAS ---
 @app.route('/setup-banco')
 def setup_banco():
     db.drop_all()
     db.create_all()
-    return "Banco de dados limpo e recriado!"
+    return "Banco de dados limpo e recriado com novas tabelas!"
 
 @app.route('/criar-admin')
 def criar_admin():
@@ -163,24 +180,20 @@ def criar_admin():
         return "Usuário Admin criado! Login: admin | Senha: 123"
     return "Admin já existe."
 
-# --- ROTA DO DASHBOARD (SÓ PARA ADMIN) ---
+# --- DASHBOARD ---
 @app.route('/dashboard')
 @login_required
 def dashboard():
-    # Verifica se é admin
     if not current_user.is_admin:
         flash("Acesso restrito ao administrador.")
         return redirect(url_for('home'))
     
-    # Calcula os dados
     total_usuarios = User.query.count()
     limite = 100
     porcentagem = min((total_usuarios / limite) * 100, 100)
     
-    # Busca a lista completa
     lista_usuarios = User.query.all()
     
-    # Envia tudo para o seu HTML
     return render_template('dashboard.html', 
                            total=total_usuarios, 
                            limite=limite, 
