@@ -39,15 +39,17 @@ class Usuario(db.Model):
 class LoginHistory(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    data_acesso = db.Column(db.DateTime, default=datetime.now) # Data/Hora automática
+    data_acesso = db.Column(db.DateTime, default=datetime.now)
 
 class User(UserMixin, db.Model): 
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(30), unique=True, nullable=False)
+    # NOVO: Campo de e-mail obrigatório e único
+    email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(256))
     is_admin = db.Column(db.Boolean, default=False)
     
-    # Nova coluna: Data do Cadastro
+    # Data do Cadastro
     created_at = db.Column(db.DateTime, default=datetime.now)
 
     # Relacionamento: Um usuário tem MUITOS históricos
@@ -89,11 +91,10 @@ def login():
         if user and user.check_password(password):
             login_user(user)
             
-            # --- NOVO: REGISTRAR O HISTÓRICO ---
+            # Registrar histórico
             novo_acesso = LoginHistory(user_id=user.id)
             db.session.add(novo_acesso)
             db.session.commit()
-            # -----------------------------------
 
             return redirect(url_for('home'))
         else:
@@ -106,22 +107,31 @@ def logout():
     logout_user()
     return redirect(url_for('home'))
 
-# --- CADASTRO ---
+# --- CADASTRO (ATUALIZADO COM E-MAIL) ---
 @app.route('/registrar', methods=['GET', 'POST'])
 def registrar():
     if request.method == 'POST':
         username = request.form.get('username')
+        email = request.form.get('email') # Captura o e-mail
         password = request.form.get('password')
 
+        # 1. Trava de limite
         if User.query.count() >= 101: 
             flash('Limite de usuários atingido! Contate o suporte.')
             return redirect(url_for('login'))
 
+        # 2. Verifica USERNAME duplicado
         if User.query.filter_by(username=username).first():
-            flash('Este usuário já existe.')
+            flash('Este nome de usuário já está em uso.')
             return redirect(url_for('registrar'))
 
-        novo_user = User(username=username, is_admin=False)
+        # 3. Verifica E-MAIL duplicado (Novo)
+        if User.query.filter_by(email=email).first():
+            flash('Este e-mail já está cadastrado no sistema.')
+            return redirect(url_for('registrar'))
+
+        # 4. Cria usuário
+        novo_user = User(username=username, email=email, is_admin=False)
         novo_user.set_password(password)
         db.session.add(novo_user)
         db.session.commit()
@@ -168,12 +178,13 @@ def delete(id):
 def setup_banco():
     db.drop_all()
     db.create_all()
-    return "Banco de dados limpo e recriado com novas tabelas!"
+    return "Banco de dados limpo e recriado com campo de E-mail!"
 
 @app.route('/criar-admin')
 def criar_admin():
     if not User.query.filter_by(username='admin').first():
-        admin = User(username='admin', is_admin=True)
+        # Admin agora também precisa de um e-mail padrão
+        admin = User(username='admin', email='admin@sistema.com', is_admin=True)
         admin.set_password('123')
         db.session.add(admin)
         db.session.commit()
