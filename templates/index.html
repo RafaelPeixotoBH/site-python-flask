@@ -46,19 +46,7 @@
           {% endif %}
         {% endwith %}
 
-        <h1>Minha Agenda</h1>
-
-        <div class="alert alert-warning border-danger mt-3">
-            <h4>🔧 Diagnóstico do Sistema:</h4>
-            <p>
-                <strong>Usuário está logado?</strong> {{ current_user.is_authenticated }} <br>
-                <strong>Nome do Usuário:</strong> {{ current_user.username }} <br>
-                <strong>O Banco diz que é Admin?</strong> 
-                <span class="badge bg-dark" style="font-size: 1.2em;">{{ current_user.is_admin }}</span>
-            </p>
-            <small>Se estiver escrito <b>False</b> ali em cima, você precisa rodar o <b>/setup-banco</b> e <b>/criar-admin</b> novamente.</small>
-        </div>
-        <div class="card shadow mt-4">
+        <div class="card shadow">
             <div class="card-header bg-primary text-white">
                 <h1 class="h3 mb-0">Lista de Nomes</h1>
             </div>
