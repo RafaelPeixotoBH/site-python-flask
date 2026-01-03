@@ -35,7 +35,6 @@ class Usuario(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     nome = db.Column(db.String(100), nullable=False)
 
-# Tabela para guardar o histórico de cada login
 class LoginHistory(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
@@ -44,15 +43,11 @@ class LoginHistory(db.Model):
 class User(UserMixin, db.Model): 
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(30), unique=True, nullable=False)
-    # NOVO: Campo de e-mail obrigatório e único
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(256))
     is_admin = db.Column(db.Boolean, default=False)
-    
-    # Data do Cadastro
     created_at = db.Column(db.DateTime, default=datetime.now)
 
-    # Relacionamento: Um usuário tem MUITOS históricos
     historico_acessos = db.relationship('LoginHistory', backref='usuario', lazy=True)
 
     def set_password(self, password):
@@ -107,30 +102,26 @@ def logout():
     logout_user()
     return redirect(url_for('home'))
 
-# --- CADASTRO (ATUALIZADO COM E-MAIL) ---
+# --- CADASTRO ---
 @app.route('/registrar', methods=['GET', 'POST'])
 def registrar():
     if request.method == 'POST':
         username = request.form.get('username')
-        email = request.form.get('email') # Captura o e-mail
+        email = request.form.get('email')
         password = request.form.get('password')
 
-        # 1. Trava de limite
         if User.query.count() >= 101: 
             flash('Limite de usuários atingido! Contate o suporte.')
             return redirect(url_for('login'))
 
-        # 2. Verifica USERNAME duplicado
         if User.query.filter_by(username=username).first():
             flash('Este nome de usuário já está em uso.')
             return redirect(url_for('registrar'))
 
-        # 3. Verifica E-MAIL duplicado (Novo)
         if User.query.filter_by(email=email).first():
             flash('Este e-mail já está cadastrado no sistema.')
             return redirect(url_for('registrar'))
 
-        # 4. Cria usuário
         novo_user = User(username=username, email=email, is_admin=False)
         novo_user.set_password(password)
         db.session.add(novo_user)
@@ -141,21 +132,34 @@ def registrar():
 
     return render_template('registrar.html')
 
-# --- MUDAR SENHA ---
+# --- MEUS DADOS (ANTIGO MUDAR SENHA) - ATUALIZADO ---
 @app.route('/mudar-senha', methods=['GET', 'POST'])
 @login_required
 def mudar_senha():
     if request.method == 'POST':
+        email_novo = request.form.get('email')
         senha_atual = request.form.get('senha_atual')
         nova_senha = request.form.get('nova_senha')
 
+        # 1. Segurança: Exige a senha atual para mudar qualquer coisa
         if not current_user.check_password(senha_atual):
-            flash('A senha atual está incorreta.')
+            flash('A senha atual está incorreta. Nada foi alterado.')
             return redirect(url_for('mudar_senha'))
 
-        current_user.set_password(nova_senha)
+        # 2. Atualiza o E-mail (se o usuário mudou o campo)
+        if email_novo and email_novo != current_user.email:
+            # Verifica se o novo e-mail já pertence a outra pessoa
+            if User.query.filter_by(email=email_novo).first():
+                flash('Este e-mail já está em uso por outro usuário.')
+                return redirect(url_for('mudar_senha'))
+            current_user.email = email_novo
+
+        # 3. Atualiza a Senha (apenas se o campo não estiver vazio)
+        if nova_senha:
+            current_user.set_password(nova_senha)
+
         db.session.commit()
-        flash('Senha alterada com sucesso!')
+        flash('Seus dados foram atualizados com sucesso!')
         return redirect(url_for('home'))
 
     return render_template('mudar_senha.html')
@@ -178,13 +182,13 @@ def delete(id):
 def setup_banco():
     db.drop_all()
     db.create_all()
-    return "Banco de dados limpo e recriado com campo de E-mail!"
+    return "Banco de dados limpo e recriado!"
 
 @app.route('/criar-admin')
 def criar_admin():
     if not User.query.filter_by(username='admin').first():
-        # Admin agora também precisa de um e-mail padrão
-        admin = User(username='admin', email='admin@sistema.com', is_admin=True)
+        # ATENÇÃO: Aqui definimos o e-mail padrão do admin
+        admin = User(username='admin', email='admin@seusistema.com', is_admin=True)
         admin.set_password('123')
         db.session.add(admin)
         db.session.commit()
