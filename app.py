@@ -19,21 +19,21 @@ app.config['MAIL_SERVER'] = 'smtp.gmail.com'
 app.config['MAIL_PORT'] = 587
 app.config['MAIL_USE_TLS'] = True
 
-# AQUI ESTÁ A MUDANÇA: O código busca os dados que você salvou no Render
-app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME') 
+# Busca os dados seguros nas variáveis de ambiente do Render
+app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME')
 app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD')
 
-# Define o remetente padrão (evita erro se a variável estiver vazia localmente)
+# Configura o remetente padrão
 if app.config['MAIL_USERNAME']:
     app.config['MAIL_DEFAULT_SENDER'] = ('Suporte Agenda', app.config['MAIL_USERNAME'])
 else:
-    # Fallback apenas para não quebrar se rodar local sem configurar
+    # Fallback para evitar erro se rodar localmente sem configurar e-mail
     app.config['MAIL_DEFAULT_SENDER'] = ('Suporte Agenda', 'noreply@agenda.com')
 
 mail = Mail(app)
 serializer = URLSafeTimedSerializer(app.config['SECRET_KEY'])
 
-# Configuração do Banco
+# Configuração do Banco de Dados (PostgreSQL no Render / SQLite no PC)
 database_url = os.environ.get('DATABASE_URL')
 if database_url and database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
@@ -51,7 +51,7 @@ login_manager.login_view = 'login'
 def load_user(user_id):
     return User.query.get(int(user_id))
 
-# --- MODELOS ---
+# --- MODELOS (TABELAS) ---
 class Usuario(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     nome = db.Column(db.String(100), nullable=False)
@@ -105,31 +105,42 @@ def login():
         username = request.form.get('username')
         password = request.form.get('password')
         
-        # Limpa logs antigos
+        # Limpa logs de erro antigos (mais de 1 minuto)
         um_minuto_atras = datetime.now() - timedelta(minutes=1)
         db.session.query(FailedLogin).filter(FailedLogin.timestamp < um_minuto_atras).delete()
         db.session.commit()
 
         user = User.query.filter_by(username=username).first()
         
+        # Se login for SUCESSO
         if user and user.check_password(password):
             login_user(user)
+            # Limpa falhas desse usuário
             db.session.query(FailedLogin).filter_by(username=username).delete()
+            # Registra histórico
             novo_acesso = LoginHistory(user_id=user.id)
             db.session.add(novo_acesso)
             db.session.commit()
             return redirect(url_for('home'))
+        
+        # Se login for FALHA
         else:
             nova_falha = FailedLogin(username=username)
             db.session.add(nova_falha)
             db.session.commit()
-            qtd_erros = FailedLogin.query.filter(FailedLogin.username == username, FailedLogin.timestamp >= um_minuto_atras).count()
+            
+            # Conta falhas recentes
+            qtd_erros = FailedLogin.query.filter(
+                FailedLogin.username == username, 
+                FailedLogin.timestamp >= um_minuto_atras
+            ).count()
             
             if qtd_erros >= 3:
-                msg_erro = Markup(f"Muitas tentativas. <a href='/recuperar' class='alert-link'>Clique aqui para recuperar sua senha.</a>")
+                msg_erro = Markup("Muitas tentativas. <a href='/recuperar' class='alert-link'>Clique aqui para recuperar sua senha.</a>")
                 flash(msg_erro, 'danger')
             else:
                 flash('Login ou senha inválidos.', 'warning')
+
     return render_template('login.html')
 
 @app.route('/logout')
@@ -146,14 +157,16 @@ def recuperar_senha():
         user = User.query.filter_by(email=email).first()
         
         if user:
-            # Verifica se o servidor de e-mail está configurado
+            # Verifica se as variáveis do Render estão carregadas
             if not app.config['MAIL_USERNAME'] or not app.config['MAIL_PASSWORD']:
-                flash('Erro no servidor: E-mail não configurado no painel do Render.', 'danger')
+                flash('Erro no servidor: E-mail não configurado nas variáveis do Render.', 'danger')
                 return redirect(url_for('login'))
 
+            # Gera token e link
             token = serializer.dumps(email, salt='recuperar-senha')
             link = url_for('resetar_senha_token', token=token, _external=True)
             
+            # Monta e envia o e-mail
             msg = Message('Recuperação de Senha', recipients=[email])
             msg.body = f'Olá {user.username},\n\nPara redefinir sua senha, clique no link abaixo:\n{link}\n\nO link expira em 1 hora.'
             
@@ -161,8 +174,7 @@ def recuperar_senha():
                 mail.send(msg)
                 flash(f'E-mail enviado para {email}. Verifique a caixa de entrada e SPAM.', 'success')
             except Exception as e:
-                # Mostra o erro na tela para ajudar a debugar
-                flash(f'Erro ao enviar: {str(e)}', 'danger')
+                flash(f'Erro ao enviar e-mail: {str(e)}', 'danger')
             
             return redirect(url_for('login'))
         else:
@@ -176,7 +188,7 @@ def resetar_senha_token(token):
     try:
         email = serializer.loads(token, salt='recuperar-senha', max_age=3600)
     except SignatureExpired:
-        flash('O link expirou.', 'danger')
+        flash('O link expirou. Solicite um novo.', 'danger')
         return redirect(url_for('recuperar_senha'))
     except:
         flash('Link inválido.', 'danger')
@@ -269,14 +281,14 @@ def setup_banco():
 @app.route('/criar-admin')
 def criar_admin():
     if not User.query.filter_by(username='admin').first():
-        # Tenta pegar o e-mail configurado no Render, senão usa um padrão
+        # Usa o e-mail das variáveis ou um padrão se não encontrar
         email_admin = os.environ.get('MAIL_USERNAME') or 'admin@admin.com'
         
         admin = User(username='admin', email=email_admin, is_admin=True)
         admin.set_password('123')
         db.session.add(admin)
         db.session.commit()
-        return f"Admin criado com o e-mail: {email_admin}"
+        return f"Admin criado com sucesso! E-mail: {email_admin}"
     return "Admin já existe."
 
 # --- DASHBOARD ---
