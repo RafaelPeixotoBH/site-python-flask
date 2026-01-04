@@ -1,11 +1,12 @@
-# --- CORREÇÃO DE REDE (IPv4) ---
+# --- PATCH DE REDE AVANÇADO (IPv4 Forçado) ---
+# Esse bloco obriga o Render a usar o caminho rápido (IPv4)
 import socket
-def getaddrinfo(*args, **kwargs):
-    responses = socket._getaddrinfo(*args, **kwargs)
-    return [r for r in responses if r[0] == socket.AF_INET]
-socket._getaddrinfo = socket.getaddrinfo
-socket.getaddrinfo = getaddrinfo
-# -------------------------------
+orig_getaddrinfo = socket.getaddrinfo
+def getaddrinfo_ipv4(host, port, family=0, type=0, proto=0, flags=0):
+    # Força a família para AF_INET (IPv4)
+    return orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+socket.getaddrinfo = getaddrinfo_ipv4
+# ---------------------------------------------
 
 import os
 from datetime import datetime, timedelta
@@ -23,14 +24,17 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'chave-secreta-mude-em-producao'
 basedir = os.path.abspath(os.path.dirname(__file__))
 
-# --- CONFIGURAÇÃO DE E-MAIL (FORÇANDO SSL / PORTA 465) ---
+# --- CONFIGURAÇÃO DE E-MAIL (MODO LEVE) ---
 app.config['MAIL_SERVER'] = 'smtp.gmail.com'
-app.config['MAIL_PORT'] = 465          # Porta Segura do Google
-app.config['MAIL_USE_TLS'] = False     # Desliga TLS
-app.config['MAIL_USE_SSL'] = True      # Liga SSL
+app.config['MAIL_PORT'] = 587           # Voltamos para a porta padrão de nuvem
+app.config['MAIL_USE_TLS'] = True       # TLS Ligado
+app.config['MAIL_USE_SSL'] = False      # SSL Desligado
+app.config['MAIL_DEBUG'] = False        # Desligado para economizar memória e tempo
+app.config['MAIL_MAX_EMAILS'] = None
+app.config['MAIL_ASCII_ATTACHMENTS'] = False
+
 app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME')
 app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD')
-# ---------------------------------------------------------
 
 # Fallback para o remetente
 if app.config['MAIL_USERNAME']:
@@ -160,8 +164,9 @@ def recuperar_senha():
         user = User.query.filter_by(email=email).first()
         
         if user:
+            # Verifica configuração
             if not app.config['MAIL_USERNAME'] or not app.config['MAIL_PASSWORD']:
-                flash('Erro: Variáveis de e-mail não configuradas.', 'danger')
+                flash('Erro Crítico: E-mail não configurado.', 'danger')
                 return redirect(url_for('login'))
 
             token = serializer.dumps(email, salt='recuperar-senha')
@@ -174,10 +179,10 @@ def recuperar_senha():
                 mail.send(msg)
                 flash(f'Sucesso! Link enviado para {email}.', 'success')
             except Exception as e:
-                # Mantivemos a exibição do erro para garantir que saberemos se falhar de novo
-                erro_real = str(e)
-                print(f"ERRO EMAIL: {erro_real}")
-                flash(f'ERRO TÉCNICO: {erro_real}', 'danger')
+                # Mantivemos a exibição do erro, mas agora em português claro
+                erro_txt = str(e)
+                print(f"ERRO EMAIL: {erro_txt}")
+                flash(f'O servidor demorou para responder. Erro: {erro_txt}', 'danger')
             
             return redirect(url_for('login'))
         else:
