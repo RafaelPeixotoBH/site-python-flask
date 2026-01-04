@@ -1,11 +1,3 @@
-# --- PATCH DE REDE OBRIGATÓRIO (IPv4) ---
-import socket
-orig_getaddrinfo = socket.getaddrinfo
-def getaddrinfo_ipv4(host, port, family=0, type=0, proto=0, flags=0):
-    return orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
-socket.getaddrinfo = getaddrinfo_ipv4
-# ----------------------------------------
-
 import os
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash
@@ -22,24 +14,19 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'chave-secreta-mude-em-producao'
 basedir = os.path.abspath(os.path.dirname(__file__))
 
-# --- CONFIGURAÇÃO DE E-MAIL (MODO PERSISTENTE) ---
-app.config['MAIL_SERVER'] = 'smtp.gmail.com'
-app.config['MAIL_PORT'] = 587             # Porta padrão TLS
-app.config['MAIL_USE_TLS'] = True         # Criptografia TLS
-app.config['MAIL_USE_SSL'] = False        # SSL desligado
+# --- CONFIGURAÇÃO DE E-MAIL (BREVO / SMTP) ---
+# Ele busca as informações que você colocou no painel do Render
+app.config['MAIL_SERVER'] = os.environ.get('MAIL_SERVER', 'smtp-relay.brevo.com')
+app.config['MAIL_PORT'] = int(os.environ.get('MAIL_PORT', 587))
+app.config['MAIL_USE_TLS'] = True
 app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME')
 app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD')
-
-# NOVAS CONFIGURAÇÕES PARA EVITAR TIMEOUT
-app.config['MAIL_ASCII_ATTACHMENTS'] = False
-app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('MAIL_USERNAME')
-# O segredo: Aumenta o tempo de espera da conexão para 60 segundos
-app.config['MAIL_CONNECT_TIMEOUT'] = 60   
+app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('MAIL_DEFAULT_SENDER')
 
 mail = Mail(app)
 serializer = URLSafeTimedSerializer(app.config['SECRET_KEY'])
 
-# Configuração do Banco
+# --- BANCO DE DADOS (PostgreSQL no Render / SQLite local) ---
 database_url = os.environ.get('DATABASE_URL')
 if database_url and database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
@@ -57,7 +44,7 @@ login_manager.login_view = 'login'
 def load_user(user_id):
     return User.query.get(int(user_id))
 
-# --- MODELOS ---
+# --- MODELOS (TABELAS) ---
 
 class Usuario(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -65,19 +52,16 @@ class Usuario(db.Model):
 
 class User(UserMixin, db.Model): 
     __tablename__ = 'user'
-    
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(30), unique=True, nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(256))
     is_admin = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.now)
-    
     historico_acessos = db.relationship('LoginHistory', backref='usuario', lazy=True)
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
-    
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
 
@@ -92,7 +76,7 @@ class FailedLogin(db.Model):
     username = db.Column(db.String(30), nullable=False)
     timestamp = db.Column(db.DateTime, default=datetime.now)
 
-# --- ROTAS ---
+# --- ROTAS PRINCIPAIS ---
 
 @app.route('/', methods=['GET', 'POST'])
 def home():
@@ -100,14 +84,12 @@ def home():
         if not current_user.is_authenticated:
             flash('Faça login para adicionar nomes.')
             return redirect(url_for('login'))
-            
         nome_form = request.form.get('nome')
         if nome_form:
             novo_usuario = Usuario(nome=nome_form)
             db.session.add(novo_usuario)
             db.session.commit()
         return redirect(url_for('home'))
-
     usuarios = Usuario.query.all()
     return render_template('index.html', usuarios=usuarios)
 
@@ -116,13 +98,11 @@ def login():
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
-        
         um_minuto_atras = datetime.now() - timedelta(minutes=1)
         db.session.query(FailedLogin).filter(FailedLogin.timestamp < um_minuto_atras).delete()
         db.session.commit()
-
-        user = User.query.filter_by(username=username).first()
         
+        user = User.query.filter_by(username=username).first()
         if user and user.check_password(password):
             login_user(user)
             db.session.query(FailedLogin).filter_by(username=username).delete()
@@ -134,15 +114,12 @@ def login():
             nova_falha = FailedLogin(username=username)
             db.session.add(nova_falha)
             db.session.commit()
-            
             qtd_erros = FailedLogin.query.filter(FailedLogin.username == username, FailedLogin.timestamp >= um_minuto_atras).count()
-            
             if qtd_erros >= 3:
                 msg_erro = Markup("Muitas tentativas. <a href='/recuperar' class='alert-link'>Clique aqui para recuperar sua senha.</a>")
                 flash(msg_erro, 'danger')
             else:
                 flash('Login ou senha inválidos.', 'warning')
-
     return render_template('login.html')
 
 @app.route('/logout')
@@ -151,81 +128,53 @@ def logout():
     logout_user()
     return redirect(url_for('home'))
 
+# --- RECUPERAÇÃO DE SENHA ---
 @app.route('/recuperar', methods=['GET', 'POST'])
 def recuperar_senha():
     if request.method == 'POST':
         email = request.form.get('email')
         user = User.query.filter_by(email=email).first()
-        
         if user:
-            # Verifica variáveis
-            if not app.config['MAIL_USERNAME'] or not app.config['MAIL_PASSWORD']:
-                flash('Erro de Configuração: Variáveis de ambiente ausentes.', 'danger')
-                return redirect(url_for('login'))
-
             token = serializer.dumps(email, salt='recuperar-senha')
             link = url_for('resetar_senha_token', token=token, _external=True)
-            
             msg = Message('Recuperação de Senha', recipients=[email])
             msg.body = f'Olá {user.username},\n\nPara redefinir sua senha, clique no link abaixo:\n{link}\n\nO link expira em 1 hora.'
-            
             try:
-                # Tenta enviar
                 mail.send(msg)
-                flash(f'Sucesso! Link enviado para {email}.', 'success')
+                flash(f'Sucesso! E-mail enviado para {email}.', 'success')
             except Exception as e:
-                # Loga o erro no console do Render e mostra na tela
-                erro_txt = str(e)
-                print(f"============== ERRO EMAIL ==============")
-                print(f"{erro_txt}")
-                print(f"========================================")
-                flash(f'Erro de conexão com o Gmail: {erro_txt}. Verifique se a conta Google bloqueou o acesso.', 'danger')
-            
+                flash(f'Erro ao enviar e-mail: {str(e)}', 'danger')
             return redirect(url_for('login'))
-        else:
-            flash('E-mail não encontrado.', 'danger')
-            
+        flash('E-mail não cadastrado.', 'danger')
     return render_template('recuperar.html')
 
 @app.route('/resetar-senha/<token>', methods=['GET', 'POST'])
 def resetar_senha_token(token):
     try:
         email = serializer.loads(token, salt='recuperar-senha', max_age=3600)
-    except SignatureExpired:
-        flash('O link expirou. Solicite um novo.', 'danger')
-        return redirect(url_for('recuperar_senha'))
     except:
-        flash('Link inválido.', 'danger')
+        flash('Link inválido ou expirado.', 'danger')
         return redirect(url_for('login'))
-
     if request.method == 'POST':
         nova_senha = request.form.get('password')
         user = User.query.filter_by(email=email).first_or_404()
         user.set_password(nova_senha)
         db.session.commit()
-        flash('Senha redefinida com sucesso! Faça login.', 'success')
+        flash('Senha redefinida com sucesso!', 'success')
         return redirect(url_for('login'))
-
     return render_template('resetar_token.html')
 
+# --- CADASTRO ---
 @app.route('/registrar', methods=['GET', 'POST'])
 def registrar():
     if request.method == 'POST':
         username = request.form.get('username')
         email = request.form.get('email')
         password = request.form.get('password')
-
-        if User.query.count() >= 101: 
-            flash('Limite de usuários atingido!', 'danger')
-            return redirect(url_for('login'))
         if User.query.filter_by(username=username).first():
             flash('Usuário já existe.', 'warning')
             return redirect(url_for('registrar'))
-        if User.query.filter_by(email=email).first():
-            flash('E-mail já cadastrado.', 'warning')
-            return redirect(url_for('registrar'))
-
-        novo_user = User(username=username, email=email, is_admin=False)
+        novo_user = User(username=username, email=email)
         novo_user.set_password(password)
         db.session.add(novo_user)
         db.session.commit()
@@ -233,32 +182,7 @@ def registrar():
         return redirect(url_for('login'))
     return render_template('registrar.html')
 
-@app.route('/mudar-senha', methods=['GET', 'POST'])
-@login_required
-def mudar_senha():
-    if request.method == 'POST':
-        email_novo = request.form.get('email')
-        senha_atual = request.form.get('senha_atual')
-        nova_senha = request.form.get('nova_senha')
-
-        if not current_user.check_password(senha_atual):
-            flash('Senha atual incorreta.', 'danger')
-            return redirect(url_for('mudar_senha'))
-        
-        if email_novo and email_novo != current_user.email:
-            if User.query.filter_by(email=email_novo).first():
-                flash('E-mail já em uso.', 'warning')
-                return redirect(url_for('mudar_senha'))
-            current_user.email = email_novo
-
-        if nova_senha:
-            current_user.set_password(nova_senha)
-
-        db.session.commit()
-        flash('Dados atualizados!', 'success')
-        return redirect(url_for('home'))
-    return render_template('mudar_senha.html')
-
+# --- EXCLUIR ---
 @app.route('/delete/<int:id>')
 @login_required
 def delete(id):
@@ -270,6 +194,7 @@ def delete(id):
     db.session.commit()
     return redirect(url_for('home'))
 
+# --- FERRAMENTAS ---
 @app.route('/setup-banco')
 def setup_banco():
     with app.app_context():
@@ -280,7 +205,7 @@ def setup_banco():
 @app.route('/criar-admin')
 def criar_admin():
     if not User.query.filter_by(username='admin').first():
-        email_admin = os.environ.get('MAIL_USERNAME') or 'admin@admin.com'
+        email_admin = os.environ.get('MAIL_DEFAULT_SENDER') or 'admin@admin.com'
         admin = User(username='admin', email=email_admin, is_admin=True)
         admin.set_password('123')
         db.session.add(admin)
@@ -288,6 +213,7 @@ def criar_admin():
         return f"Admin criado! E-mail: {email_admin}"
     return "Admin já existe."
 
+# --- DASHBOARD ---
 @app.route('/dashboard')
 @login_required
 def dashboard():
@@ -295,10 +221,8 @@ def dashboard():
         flash("Acesso restrito.", 'danger')
         return redirect(url_for('home'))
     total = User.query.count()
-    limite = 100
-    porcentagem = min((total / limite) * 100, 100)
     lista = User.query.all()
-    return render_template('dashboard.html', total=total, limite=limite, porcentagem=porcentagem, lista=lista)
+    return render_template('dashboard.html', total=total, limite=100, porcentagem=total, lista=lista)
 
 if __name__ == '__main__':
     with app.app_context():
