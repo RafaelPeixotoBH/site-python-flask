@@ -100,7 +100,6 @@ def login():
         username = request.form.get('username')
         password = request.form.get('password')
         
-        # Limpeza de tentativas antigas
         um_minuto_atras = datetime.now() - timedelta(minutes=1)
         FailedLogin.query.filter(FailedLogin.timestamp < um_minuto_atras).delete()
         db.session.commit()
@@ -120,8 +119,7 @@ def login():
             
             qtd_erros = FailedLogin.query.filter(FailedLogin.username == username, FailedLogin.timestamp >= um_minuto_atras).count()
             if qtd_erros >= 3:
-                link = url_for('recuperar_senha')
-                msg = Markup(f"Muitas tentativas. <a href='{link}' class='alert-link'>Clique aqui para recuperar sua senha.</a>")
+                msg = Markup(f"Muitas tentativas. <a href='{url_for('recuperar_senha')}' class='alert-link'>Clique aqui para recuperar sua senha.</a>")
                 flash(msg, 'danger')
             else:
                 flash('Login ou senha inválidos.', 'warning')
@@ -133,6 +131,27 @@ def logout():
     logout_user()
     return redirect(url_for('home'))
 
+@app.route('/registrar', methods=['GET', 'POST'])
+def registrar():
+    if request.method == 'POST':
+        username = request.form.get('username')
+        email = request.form.get('email')
+        password = request.form.get('password')
+        
+        if User.query.filter_by(username=username).first():
+            flash('Usuário já existe.', 'warning')
+            return redirect(url_for('registrar'))
+        
+        novo_user = User(username=username, email=email)
+        novo_user.set_password(password)
+        db.session.add(novo_user)
+        db.session.commit()
+        flash('Conta criada com sucesso!', 'success')
+        return redirect(url_for('login'))
+    return render_template('registrar.html')
+
+# --- RECUPERAÇÃO E MUDANÇA DE SENHA ---
+
 @app.route('/recuperar', methods=['GET', 'POST'])
 def recuperar_senha():
     if request.method == 'POST':
@@ -142,7 +161,7 @@ def recuperar_senha():
             token = serializer.dumps(email, salt='recuperar-senha')
             link = url_for('resetar_senha_token', token=token, _external=True)
             msg = Message('Recuperação de Senha', recipients=[email])
-            msg.body = f'Olá {user.username},\n\nClique no link para redefinir sua senha:\n{link}\n\nO link expira em 1 hora.'
+            msg.body = f'Olá {user.username},\n\nPara redefinir sua senha, use o link: {link}'
             try:
                 mail.send(msg)
                 flash(f'Sucesso! Instruções enviadas para {email}.', 'success')
@@ -169,24 +188,24 @@ def resetar_senha_token(token):
         return redirect(url_for('login'))
     return render_template('resetar_token.html')
 
-@app.route('/registrar', methods=['GET', 'POST'])
-def registrar():
+@app.route('/mudar-senha', methods=['GET', 'POST'])
+@login_required
+def mudar_senha():
     if request.method == 'POST':
-        username = request.form.get('username')
-        email = request.form.get('email')
-        password = request.form.get('password')
+        senha_atual = request.form.get('senha_atual')
+        nova_senha = request.form.get('nova_senha')
+
+        if not current_user.check_password(senha_atual):
+            flash('Senha atual incorreta.', 'danger')
+            return redirect(url_for('mudar_senha'))
         
-        if User.query.filter_by(username=username).first():
-            flash('Usuário já existe.', 'warning')
-            return redirect(url_for('registrar'))
-        
-        novo_user = User(username=username, email=email)
-        novo_user.set_password(password)
-        db.session.add(novo_user)
+        current_user.set_password(nova_senha)
         db.session.commit()
-        flash('Conta criada com sucesso!', 'success')
-        return redirect(url_for('login'))
-    return render_template('registrar.html')
+        flash('Senha alterada com sucesso!', 'success')
+        return redirect(url_for('home'))
+    return render_template('mudar_senha.html')
+
+# --- ADMINISTRAÇÃO E DASHBOARD ---
 
 @app.route('/delete/<int:id>')
 @login_required
@@ -199,7 +218,17 @@ def delete(id):
     db.session.commit()
     return redirect(url_for('home'))
 
-# --- FERRAMENTAS DO SISTEMA ---
+@app.route('/dashboard')
+@login_required
+def dashboard():
+    if not current_user.is_admin:
+        flash("Acesso restrito.", 'danger')
+        return redirect(url_for('home'))
+    total_users = User.query.count()
+    lista_users = User.query.all()
+    return render_template('dashboard.html', total=total_users, lista=lista_users, limite=100)
+
+# --- FERRAMENTAS ---
 
 @app.route('/setup-banco')
 def setup_banco():
@@ -211,25 +240,13 @@ def setup_banco():
 @app.route('/criar-admin')
 def criar_admin():
     if not User.query.filter_by(username='admin').first():
-        # Busca o e-mail real das variáveis de ambiente
         email_admin = os.environ.get('MAIL_DEFAULT_SENDER') or 'admin@admin.com'
-        
         admin = User(username='admin', email=email_admin, is_admin=True)
         admin.set_password('123')
         db.session.add(admin)
         db.session.commit()
-        return f"Admin criado! E-mail de login: {email_admin}"
+        return f"Admin criado com sucesso! E-mail de login: {email_admin}"
     return "O usuário Admin já existe."
-
-@app.route('/dashboard')
-@login_required
-def dashboard():
-    if not current_user.is_admin:
-        flash("Acesso restrito a administradores.", 'danger')
-        return redirect(url_for('home'))
-    total_users = User.query.count()
-    lista_users = User.query.all()
-    return render_template('dashboard.html', total=total_users, lista=lista_users, limite=100)
 
 if __name__ == '__main__':
     with app.app_context():
