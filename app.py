@@ -145,6 +145,7 @@ def registrar():
 def recuperar_senha():
     if request.method == 'POST':
         email = request.form.get('email')
+        print(f">>> TENTANDO RECUPERAR PARA: {email}") # LOG
         user = User.query.filter_by(email=email).first()
         if user:
             token = serializer.dumps(email, salt='recuperar-senha')
@@ -152,11 +153,16 @@ def recuperar_senha():
             msg = Message('Recuperação de Senha', recipients=[email])
             msg.body = f'Olá {user.username}, use o link para redefinir sua senha: {link}'
             try:
+                print(">>> ENVIANDO E-MAIL VIA BREVO...") # LOG
                 mail.send(msg)
+                print(">>> E-MAIL ENVIADO COM SUCESSO!") # LOG
                 flash('E-mail de recuperação enviado!', 'success')
             except Exception as ex:
-                flash(f'Erro ao enviar: {str(ex)}', 'danger')
+                print(f">>> ERRO CRÍTICO NO ENVIO: {str(ex)}") # LOG REAL
+                flash(f'Erro ao enviar e-mail: {str(ex)}', 'danger')
             return redirect(url_for('login'))
+        
+        print(">>> E-MAIL NÃO ENCONTRADO NO BANCO") # LOG
         flash('E-mail não encontrado.', 'danger')
     return render_template('recuperar.html')
 
