@@ -5,8 +5,8 @@ from markupsafe import Markup
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
-from flask_mail import Mail, Message # Importação para E-mail
-from itsdangerous import URLSafeTimedSerializer, SignatureExpired # Para gerar o token seguro
+from flask_mail import Mail, Message
+from itsdangerous import URLSafeTimedSerializer, SignatureExpired
 
 app = Flask(__name__)
 
@@ -14,16 +14,24 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'chave-secreta-mude-em-producao'
 basedir = os.path.abspath(os.path.dirname(__file__))
 
-# --- CONFIGURAÇÃO DO SERVIDOR DE E-MAIL (GMAIL) ---
+# --- CONFIGURAÇÃO DO SERVIDOR DE E-MAIL (VIA VARIÁVEIS DO RENDER) ---
 app.config['MAIL_SERVER'] = 'smtp.gmail.com'
 app.config['MAIL_PORT'] = 587
 app.config['MAIL_USE_TLS'] = True
-app.config['MAIL_USERNAME'] = 'nossaagendasuporte@gmail.com'  # <--- COLOQUE SEU GMAIL AQUI
-app.config['MAIL_PASSWORD'] = 'zrkb zmvh vkhb vlif'       # <--- COLOQUE A SENHA DE APP AQUI (16 letras)
-app.config['MAIL_DEFAULT_SENDER'] = ('Suporte Agenda', app.config['MAIL_USERNAME'])
+
+# AQUI ESTÁ A MUDANÇA: O código busca os dados que você salvou no Render
+app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME') 
+app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD')
+
+# Define o remetente padrão (evita erro se a variável estiver vazia localmente)
+if app.config['MAIL_USERNAME']:
+    app.config['MAIL_DEFAULT_SENDER'] = ('Suporte Agenda', app.config['MAIL_USERNAME'])
+else:
+    # Fallback apenas para não quebrar se rodar local sem configurar
+    app.config['MAIL_DEFAULT_SENDER'] = ('Suporte Agenda', 'noreply@agenda.com')
 
 mail = Mail(app)
-serializer = URLSafeTimedSerializer(app.config['SECRET_KEY']) # Gerador de Tokens
+serializer = URLSafeTimedSerializer(app.config['SECRET_KEY'])
 
 # Configuração do Banco
 database_url = os.environ.get('DATABASE_URL')
@@ -130,7 +138,7 @@ def logout():
     logout_user()
     return redirect(url_for('home'))
 
-# --- RECUPERAÇÃO DE SENHA (ENVIO DE E-MAIL REAL) ---
+# --- RECUPERAÇÃO DE SENHA (ENVIO REAL) ---
 @app.route('/recuperar', methods=['GET', 'POST'])
 def recuperar_senha():
     if request.method == 'POST':
@@ -138,22 +146,23 @@ def recuperar_senha():
         user = User.query.filter_by(email=email).first()
         
         if user:
-            # 1. Gera um token seguro (válido por 1 hora)
+            # Verifica se o servidor de e-mail está configurado
+            if not app.config['MAIL_USERNAME'] or not app.config['MAIL_PASSWORD']:
+                flash('Erro no servidor: E-mail não configurado no painel do Render.', 'danger')
+                return redirect(url_for('login'))
+
             token = serializer.dumps(email, salt='recuperar-senha')
-            
-            # 2. Cria o Link (Se estiver local usa localhost, se estiver no render usa o dominio do render)
             link = url_for('resetar_senha_token', token=token, _external=True)
             
-            # 3. Monta o E-mail
             msg = Message('Recuperação de Senha', recipients=[email])
             msg.body = f'Olá {user.username},\n\nPara redefinir sua senha, clique no link abaixo:\n{link}\n\nO link expira em 1 hora.'
             
-            # 4. Envia
             try:
                 mail.send(msg)
-                flash(f'E-mail de recuperação enviado para {email}. Verifique sua caixa de entrada (e spam).', 'success')
+                flash(f'E-mail enviado para {email}. Verifique a caixa de entrada e SPAM.', 'success')
             except Exception as e:
-                flash(f'Erro ao enviar e-mail: {str(e)}', 'danger')
+                # Mostra o erro na tela para ajudar a debugar
+                flash(f'Erro ao enviar: {str(e)}', 'danger')
             
             return redirect(url_for('login'))
         else:
@@ -161,14 +170,13 @@ def recuperar_senha():
             
     return render_template('recuperar.html')
 
-# --- NOVA ROTA: ONDE O USUÁRIO CRIA A NOVA SENHA ---
+# --- DEFINIR NOVA SENHA ---
 @app.route('/resetar-senha/<token>', methods=['GET', 'POST'])
 def resetar_senha_token(token):
     try:
-        # Tenta decodificar o token (máximo 3600 segundos = 1 hora)
         email = serializer.loads(token, salt='recuperar-senha', max_age=3600)
     except SignatureExpired:
-        flash('O link de recuperação expirou. Solicite um novo.', 'danger')
+        flash('O link expirou.', 'danger')
         return redirect(url_for('recuperar_senha'))
     except:
         flash('Link inválido.', 'danger')
@@ -181,7 +189,7 @@ def resetar_senha_token(token):
         user.set_password(nova_senha)
         db.session.commit()
         
-        flash('Sua senha foi redefinida com sucesso! Faça login.', 'success')
+        flash('Senha redefinida com sucesso! Faça login.', 'success')
         return redirect(url_for('login'))
 
     return render_template('resetar_token.html')
@@ -261,12 +269,14 @@ def setup_banco():
 @app.route('/criar-admin')
 def criar_admin():
     if not User.query.filter_by(username='admin').first():
-        # ADMIN PADRÃO
-        admin = User(username='admin', email='seu.email.real@gmail.com', is_admin=True)
+        # Tenta pegar o e-mail configurado no Render, senão usa um padrão
+        email_admin = os.environ.get('MAIL_USERNAME') or 'admin@admin.com'
+        
+        admin = User(username='admin', email=email_admin, is_admin=True)
         admin.set_password('123')
         db.session.add(admin)
         db.session.commit()
-        return "Admin criado!"
+        return f"Admin criado com o e-mail: {email_admin}"
     return "Admin já existe."
 
 # --- DASHBOARD ---
