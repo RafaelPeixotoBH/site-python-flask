@@ -11,25 +11,27 @@ from itsdangerous import URLSafeTimedSerializer, SignatureExpired
 app = Flask(__name__)
 
 # --- CONFIGURAÇÕES GERAIS ---
-app.config['SECRET_KEY'] = 'chave-secreta-mude-em-producao'
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'chave-secreta-mude-em-producao')
 basedir = os.path.abspath(os.path.dirname(__file__))
 
 # --- CONFIGURAÇÃO DE E-MAIL (BREVO / SMTP) ---
-# Ele busca as informações que você colocou no painel do Render
 app.config['MAIL_SERVER'] = os.environ.get('MAIL_SERVER', 'smtp-relay.brevo.com')
 app.config['MAIL_PORT'] = int(os.environ.get('MAIL_PORT', 587))
 app.config['MAIL_USE_TLS'] = True
 app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME')
 app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD')
-app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('MAIL_DEFAULT_SENDER')
+
+# Garante que o remetente padrão seja o e-mail validado no Brevo
+app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('MAIL_DEFAULT_SENDER', app.config['MAIL_USERNAME'])
 
 mail = Mail(app)
 serializer = URLSafeTimedSerializer(app.config['SECRET_KEY'])
 
-# --- BANCO DE DADOS (PostgreSQL no Render / SQLite local) ---
+# --- BANCO DE DADOS ---
 database_url = os.environ.get('DATABASE_URL')
 if database_url and database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
+
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url or 'sqlite:///' + os.path.join(basedir, 'meu_banco.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
@@ -44,8 +46,7 @@ login_manager.login_view = 'login'
 def load_user(user_id):
     return User.query.get(int(user_id))
 
-# --- MODELOS (TABELAS) ---
-
+# --- MODELOS ---
 class Usuario(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     nome = db.Column(db.String(100), nullable=False)
@@ -76,8 +77,7 @@ class FailedLogin(db.Model):
     username = db.Column(db.String(30), nullable=False)
     timestamp = db.Column(db.DateTime, default=datetime.now)
 
-# --- ROTAS PRINCIPAIS ---
-
+# --- ROTAS ---
 @app.route('/', methods=['GET', 'POST'])
 def home():
     if request.method == 'POST':
@@ -116,7 +116,8 @@ def login():
             db.session.commit()
             qtd_erros = FailedLogin.query.filter(FailedLogin.username == username, FailedLogin.timestamp >= um_minuto_atras).count()
             if qtd_erros >= 3:
-                msg_erro = Markup("Muitas tentativas. <a href='/recuperar' class='alert-link'>Clique aqui para recuperar sua senha.</a>")
+                msg_link = url_for('recuperar_senha')
+                msg_erro = Markup(f"Muitas tentativas. <a href='{msg_link}' class='alert-link'>Clique aqui para recuperar sua senha.</a>")
                 flash(msg_erro, 'danger')
             else:
                 flash('Login ou senha inválidos.', 'warning')
@@ -128,7 +129,6 @@ def logout():
     logout_user()
     return redirect(url_for('home'))
 
-# --- RECUPERAÇÃO DE SENHA ---
 @app.route('/recuperar', methods=['GET', 'POST'])
 def recuperar_senha():
     if request.method == 'POST':
@@ -164,7 +164,6 @@ def resetar_senha_token(token):
         return redirect(url_for('login'))
     return render_template('resetar_token.html')
 
-# --- CADASTRO ---
 @app.route('/registrar', methods=['GET', 'POST'])
 def registrar():
     if request.method == 'POST':
@@ -182,7 +181,6 @@ def registrar():
         return redirect(url_for('login'))
     return render_template('registrar.html')
 
-# --- EXCLUIR ---
 @app.route('/delete/<int:id>')
 @login_required
 def delete(id):
@@ -194,7 +192,6 @@ def delete(id):
     db.session.commit()
     return redirect(url_for('home'))
 
-# --- FERRAMENTAS ---
 @app.route('/setup-banco')
 def setup_banco():
     with app.app_context():
@@ -205,7 +202,7 @@ def setup_banco():
 @app.route('/criar-admin')
 def criar_admin():
     if not User.query.filter_by(username='admin').first():
-        email_admin = os.environ.get('MAIL_DEFAULT_SENDER') or 'admin@admin.com'
+        email_admin = app.config['MAIL_DEFAULT_SENDER'] or 'admin@admin.com'
         admin = User(username='admin', email=email_admin, is_admin=True)
         admin.set_password('123')
         db.session.add(admin)
@@ -213,7 +210,6 @@ def criar_admin():
         return f"Admin criado! E-mail: {email_admin}"
     return "Admin já existe."
 
-# --- DASHBOARD ---
 @app.route('/dashboard')
 @login_required
 def dashboard():
