@@ -14,26 +14,23 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'chave-secreta-mude-em-producao'
 basedir = os.path.abspath(os.path.dirname(__file__))
 
-# --- CONFIGURAÇÃO DO SERVIDOR DE E-MAIL (VIA VARIÁVEIS DO RENDER) ---
+# --- CONFIGURAÇÃO DE E-MAIL (Blindada) ---
 app.config['MAIL_SERVER'] = 'smtp.gmail.com'
 app.config['MAIL_PORT'] = 587
 app.config['MAIL_USE_TLS'] = True
-
-# Busca os dados seguros nas variáveis de ambiente do Render
 app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME')
 app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD')
 
-# Configura o remetente padrão
+# Fallback para o remetente não quebrar se a variável não existir
 if app.config['MAIL_USERNAME']:
     app.config['MAIL_DEFAULT_SENDER'] = ('Suporte Agenda', app.config['MAIL_USERNAME'])
 else:
-    # Fallback para evitar erro se rodar localmente sem configurar e-mail
     app.config['MAIL_DEFAULT_SENDER'] = ('Suporte Agenda', 'noreply@agenda.com')
 
 mail = Mail(app)
 serializer = URLSafeTimedSerializer(app.config['SECRET_KEY'])
 
-# Configuração do Banco de Dados (PostgreSQL no Render / SQLite no PC)
+# Configuração do Banco de Dados
 database_url = os.environ.get('DATABASE_URL')
 if database_url and database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
@@ -52,27 +49,24 @@ def load_user(user_id):
     return User.query.get(int(user_id))
 
 # --- MODELOS (TABELAS) ---
+
+# Tabela simples para a lista de nomes na Home
 class Usuario(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     nome = db.Column(db.String(100), nullable=False)
 
-class LoginHistory(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    data_acesso = db.Column(db.DateTime, default=datetime.now)
-
-class FailedLogin(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(30), nullable=False)
-    timestamp = db.Column(db.DateTime, default=datetime.now)
-
+# Tabela de Usuários do Sistema (Login)
 class User(UserMixin, db.Model): 
+    __tablename__ = 'user' # Nome explícito para evitar erros
+    
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(30), unique=True, nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(256))
     is_admin = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.now)
+    
+    # Relacionamento com histórico
     historico_acessos = db.relationship('LoginHistory', backref='usuario', lazy=True)
 
     def set_password(self, password):
@@ -81,20 +75,37 @@ class User(UserMixin, db.Model):
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
 
+# Tabela de Histórico de Login
+class LoginHistory(db.Model):
+    __tablename__ = 'login_history'
+    id = db.Column(db.Integer, primary_key=True)
+    # Correção do ForeignKey
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    data_acesso = db.Column(db.DateTime, default=datetime.now)
+
+# Tabela de Tentativas Falhas (Segurança)
+class FailedLogin(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(30), nullable=False)
+    timestamp = db.Column(db.DateTime, default=datetime.now)
+
 # --- ROTAS PRINCIPAIS ---
 
 @app.route('/', methods=['GET', 'POST'])
 def home():
+    # Lógica para adicionar nomes na lista simples
     if request.method == 'POST':
         if not current_user.is_authenticated:
             flash('Faça login para adicionar nomes.')
             return redirect(url_for('login'))
+            
         nome_form = request.form.get('nome')
         if nome_form:
             novo_usuario = Usuario(nome=nome_form)
             db.session.add(novo_usuario)
             db.session.commit()
         return redirect(url_for('home'))
+
     usuarios = Usuario.query.all()
     return render_template('index.html', usuarios=usuarios)
 
@@ -105,35 +116,28 @@ def login():
         username = request.form.get('username')
         password = request.form.get('password')
         
-        # Limpa logs de erro antigos (mais de 1 minuto)
+        # Limpa logs antigos (1 minuto)
         um_minuto_atras = datetime.now() - timedelta(minutes=1)
         db.session.query(FailedLogin).filter(FailedLogin.timestamp < um_minuto_atras).delete()
         db.session.commit()
 
         user = User.query.filter_by(username=username).first()
         
-        # Se login for SUCESSO
         if user and user.check_password(password):
             login_user(user)
-            # Limpa falhas desse usuário
+            # Limpa falhas
             db.session.query(FailedLogin).filter_by(username=username).delete()
             # Registra histórico
             novo_acesso = LoginHistory(user_id=user.id)
             db.session.add(novo_acesso)
             db.session.commit()
             return redirect(url_for('home'))
-        
-        # Se login for FALHA
         else:
             nova_falha = FailedLogin(username=username)
             db.session.add(nova_falha)
             db.session.commit()
             
-            # Conta falhas recentes
-            qtd_erros = FailedLogin.query.filter(
-                FailedLogin.username == username, 
-                FailedLogin.timestamp >= um_minuto_atras
-            ).count()
+            qtd_erros = FailedLogin.query.filter(FailedLogin.username == username, FailedLogin.timestamp >= um_minuto_atras).count()
             
             if qtd_erros >= 3:
                 msg_erro = Markup("Muitas tentativas. <a href='/recuperar' class='alert-link'>Clique aqui para recuperar sua senha.</a>")
@@ -149,7 +153,7 @@ def logout():
     logout_user()
     return redirect(url_for('home'))
 
-# --- RECUPERAÇÃO DE SENHA (ENVIO REAL) ---
+# --- RECUPERAÇÃO DE SENHA ---
 @app.route('/recuperar', methods=['GET', 'POST'])
 def recuperar_senha():
     if request.method == 'POST':
@@ -157,24 +161,26 @@ def recuperar_senha():
         user = User.query.filter_by(email=email).first()
         
         if user:
-            # Verifica se as variáveis do Render estão carregadas
+            # Verifica configuração antes de tentar enviar
             if not app.config['MAIL_USERNAME'] or not app.config['MAIL_PASSWORD']:
-                flash('Erro no servidor: E-mail não configurado nas variáveis do Render.', 'danger')
+                flash('Erro Crítico: Servidor de e-mail não configurado no Render.', 'danger')
                 return redirect(url_for('login'))
 
-            # Gera token e link
             token = serializer.dumps(email, salt='recuperar-senha')
             link = url_for('resetar_senha_token', token=token, _external=True)
             
-            # Monta e envia o e-mail
             msg = Message('Recuperação de Senha', recipients=[email])
             msg.body = f'Olá {user.username},\n\nPara redefinir sua senha, clique no link abaixo:\n{link}\n\nO link expira em 1 hora.'
             
             try:
                 mail.send(msg)
-                flash(f'E-mail enviado para {email}. Verifique a caixa de entrada e SPAM.', 'success')
+                flash(f'Sucesso! Link enviado para {email}.', 'success')
             except Exception as e:
-                flash(f'Erro ao enviar e-mail: {str(e)}', 'danger')
+                # LOG NO CONSOLE (Para você ver no painel do Render)
+                print(f"============== ERRO DE E-MAIL ==============")
+                print(f"ERRO: {str(e)}")
+                print(f"============================================")
+                flash(f'Falha ao enviar e-mail. Erro registrado no sistema.', 'danger')
             
             return redirect(url_for('login'))
         else:
@@ -182,7 +188,6 @@ def recuperar_senha():
             
     return render_template('recuperar.html')
 
-# --- DEFINIR NOVA SENHA ---
 @app.route('/resetar-senha/<token>', methods=['GET', 'POST'])
 def resetar_senha_token(token):
     try:
@@ -197,10 +202,8 @@ def resetar_senha_token(token):
     if request.method == 'POST':
         nova_senha = request.form.get('password')
         user = User.query.filter_by(email=email).first_or_404()
-        
         user.set_password(nova_senha)
         db.session.commit()
-        
         flash('Senha redefinida com sucesso! Faça login.', 'success')
         return redirect(url_for('login'))
 
@@ -274,21 +277,20 @@ def delete(id):
 # --- FERRAMENTAS ---
 @app.route('/setup-banco')
 def setup_banco():
+    # Recria tudo (User, Usuario, Logs, etc)
     db.drop_all()
     db.create_all()
-    return "Banco resetado!"
+    return "Banco resetado com sucesso (Estrutura Nova)!"
 
 @app.route('/criar-admin')
 def criar_admin():
     if not User.query.filter_by(username='admin').first():
-        # Usa o e-mail das variáveis ou um padrão se não encontrar
         email_admin = os.environ.get('MAIL_USERNAME') or 'admin@admin.com'
-        
         admin = User(username='admin', email=email_admin, is_admin=True)
         admin.set_password('123')
         db.session.add(admin)
         db.session.commit()
-        return f"Admin criado com sucesso! E-mail: {email_admin}"
+        return f"Admin criado! E-mail: {email_admin}"
     return "Admin já existe."
 
 # --- DASHBOARD ---
@@ -298,10 +300,12 @@ def dashboard():
     if not current_user.is_admin:
         flash("Acesso restrito.", 'danger')
         return redirect(url_for('home'))
+    
     total = User.query.count()
     limite = 100
     porcentagem = min((total / limite) * 100, 100)
     lista = User.query.all()
+    
     return render_template('dashboard.html', total=total, limite=limite, porcentagem=porcentagem, lista=lista)
 
 if __name__ == '__main__':
