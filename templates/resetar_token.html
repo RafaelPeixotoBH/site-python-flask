@@ -5,20 +5,19 @@
     <title>Redefinir Senha</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 </head>
-<body class="bg-light d-flex align-items-center py-5" style="height: 100vh;">
-    <div class="container">
+<body class="bg-light">
+    <div class="container mt-5">
         <div class="row justify-content-center">
-            <div class="col-md-5">
-                <div class="card shadow">
-                    <div class="card-body p-4 text-center">
-                        <h3 class="mb-3">Nova Senha</h3>
-                        
+            <div class="col-md-4">
+                <div class="card shadow border-0">
+                    <div class="card-body p-4">
+                        <h2 class="h5 mb-3 text-center">Nova Senha</h2>
                         <form method="POST">
-                            <div class="mb-3 text-start">
+                            <div class="mb-3">
                                 <label class="form-label">Digite sua nova senha</label>
-                                <input type="password" name="password" class="form-control" required>
+                                <input type="password" name="password" class="form-control" required minlength="4">
                             </div>
-                            <button type="submit" class="btn btn-success w-100">Salvar Nova Senha</button>
+                            <button type="submit" class="btn btn-primary w-100">Atualizar Senha</button>
                         </form>
                     </div>
                 </div>

@@ -2,34 +2,31 @@
 <html lang="pt-br">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Recuperar Senha</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
 </head>
-<body class="bg-light d-flex align-items-center py-5" style="height: 100vh;">
-    <div class="container">
+<body class="bg-light">
+    <div class="container mt-5">
         <div class="row justify-content-center">
-            <div class="col-md-5">
-                <div class="card shadow">
+            <div class="col-md-4">
+                <div class="card shadow border-0">
                     <div class="card-body p-4 text-center">
-                        <h3 class="mb-3">Recuperação de Conta</h3>
-                        <p class="text-muted">Informe seu e-mail cadastrado para receber as instruções.</p>
+                        <div class="mb-4 text-primary">
+                            <i class="bi bi-envelope-at" style="font-size: 3rem;"></i>
+                        </div>
+                        <h2 class="h4 mb-3">Recuperar Senha</h2>
+                        <p class="text-muted small mb-4">Enviaremos um link de redefinição para o seu e-mail cadastrado.</p>
                         
-                        {% with messages = get_flashed_messages(with_categories=true) %}
-                        {% if messages %}
-                            {% for category, message in messages %}
-                                <div class="alert alert-{{ category }}">{{ message }}</div>
-                            {% endfor %}
-                        {% endif %}
-                        {% endwith %}
-
-                        <form method="POST">
-                            <div class="mb-3 text-start">
-                                <label class="form-label">E-mail</label>
-                                <input type="email" name="email" class="form-control" placeholder="seu@email.com" required>
+                        <form action="{{ url_for('recuperar_senha') }}" method="POST">
+                            <div class="mb-3">
+                                <input type="email" name="email" class="form-control text-center" placeholder="Digite seu e-mail" required>
                             </div>
-                            
-                            <button type="submit" class="btn btn-primary w-100 mb-3">Enviar Link de Recuperação</button>
-                            <a href="/login" class="text-decoration-none text-muted">Voltar para o Login</a>
+                            <div class="d-grid gap-2">
+                                <button type="submit" class="btn btn-primary">Enviar Link</button>
+                                <a href="{{ url_for('login') }}" class="btn btn-link btn-sm text-decoration-none">Voltar ao Login</a>
+                            </div>
                         </form>
                     </div>
                 </div>
