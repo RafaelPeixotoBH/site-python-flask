@@ -1,12 +1,11 @@
-# --- CORREÇÃO DE REDE (Force IPv4) ---
-# Essencial para o Render funcionar com Gmail
+# --- CORREÇÃO DE REDE (IPv4) ---
 import socket
 def getaddrinfo(*args, **kwargs):
     responses = socket._getaddrinfo(*args, **kwargs)
     return [r for r in responses if r[0] == socket.AF_INET]
 socket._getaddrinfo = socket.getaddrinfo
 socket.getaddrinfo = getaddrinfo
-# -------------------------------------
+# -------------------------------
 
 import os
 from datetime import datetime, timedelta
@@ -24,15 +23,14 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'chave-secreta-mude-em-producao'
 basedir = os.path.abspath(os.path.dirname(__file__))
 
-# --- CONFIGURAÇÃO DE E-MAIL (PADRÃO 587/TLS) ---
+# --- CONFIGURAÇÃO DE E-MAIL (FORÇANDO SSL / PORTA 465) ---
 app.config['MAIL_SERVER'] = 'smtp.gmail.com'
-app.config['MAIL_PORT'] = 587
-app.config['MAIL_USE_TLS'] = True
-app.config['MAIL_USE_SSL'] = False
+app.config['MAIL_PORT'] = 465          # Porta Segura do Google
+app.config['MAIL_USE_TLS'] = False     # Desliga TLS
+app.config['MAIL_USE_SSL'] = True      # Liga SSL
 app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME')
 app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD')
-app.config['MAIL_DEBUG'] = True # Ajuda a ver erros nos logs
-app.config['MAIL_MAX_EMAILS'] = None
+# ---------------------------------------------------------
 
 # Fallback para o remetente
 if app.config['MAIL_USERNAME']:
@@ -162,9 +160,8 @@ def recuperar_senha():
         user = User.query.filter_by(email=email).first()
         
         if user:
-            # Verifica se as variáveis existem
             if not app.config['MAIL_USERNAME'] or not app.config['MAIL_PASSWORD']:
-                flash('ERRO DE CONFIGURAÇÃO: Verifique as variáveis MAIL_USERNAME e MAIL_PASSWORD no Render.', 'danger')
+                flash('Erro: Variáveis de e-mail não configuradas.', 'danger')
                 return redirect(url_for('login'))
 
             token = serializer.dumps(email, salt='recuperar-senha')
@@ -177,7 +174,7 @@ def recuperar_senha():
                 mail.send(msg)
                 flash(f'Sucesso! Link enviado para {email}.', 'success')
             except Exception as e:
-                # AQUI ESTÁ O TRUQUE: Mostra o erro real na tela
+                # Mantivemos a exibição do erro para garantir que saberemos se falhar de novo
                 erro_real = str(e)
                 print(f"ERRO EMAIL: {erro_real}")
                 flash(f'ERRO TÉCNICO: {erro_real}', 'danger')
@@ -296,7 +293,7 @@ def dashboard():
         flash("Acesso restrito.", 'danger')
         return redirect(url_for('home'))
     total = User.query.count()
-    limite = 1000
+    limite = 100
     porcentagem = min((total / limite) * 100, 100)
     lista = User.query.all()
     return render_template('dashboard.html', total=total, limite=limite, porcentagem=porcentagem, lista=lista)
