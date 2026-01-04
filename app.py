@@ -1,5 +1,5 @@
 # --- CORREÇÃO DE REDE (Force IPv4) ---
-# Isso resolve o erro [Errno 101] Rede inacessível no Render
+# Mantemos isso pois é vital para o Render não se perder
 import socket
 def getaddrinfo(*args, **kwargs):
     responses = socket._getaddrinfo(*args, **kwargs)
@@ -24,10 +24,14 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'chave-secreta-mude-em-producao'
 basedir = os.path.abspath(os.path.dirname(__file__))
 
-# --- CONFIGURAÇÃO DE E-MAIL ---
+# --- CONFIGURAÇÃO DE E-MAIL (MODIFICADO PARA PORTA 465/SSL) ---
 app.config['MAIL_SERVER'] = 'smtp.gmail.com'
-app.config['MAIL_PORT'] = 587
-app.config['MAIL_USE_TLS'] = True
+
+# MUDANÇA AQUI: Trocamos 587 por 465 e ativamos SSL
+app.config['MAIL_PORT'] = 465
+app.config['MAIL_USE_TLS'] = False  # Desliga TLS
+app.config['MAIL_USE_SSL'] = True   # Liga SSL (Conexão Segura Direta)
+
 app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME')
 app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD')
 
@@ -176,7 +180,7 @@ def recuperar_senha():
                 print(f"============== ERRO DE E-MAIL ==============")
                 print(f"ERRO: {str(e)}")
                 print(f"============================================")
-                flash(f'Falha ao enviar e-mail. Erro: {str(e)}', 'danger')
+                flash(f'Falha ao enviar e-mail. Tente novamente mais tarde.', 'danger')
             
             return redirect(url_for('login'))
         else:
