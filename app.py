@@ -127,9 +127,7 @@ def logout():
 @app.route('/registrar', methods=['GET', 'POST'])
 def registrar():
     if request.method == 'POST':
-        u = request.form.get('username')
-        e = request.form.get('email')
-        p = request.form.get('password')
+        u, e, p = request.form.get('username'), request.form.get('email'), request.form.get('password')
         if User.query.filter_by(username=u).first():
             flash('Usuário já existe.', 'warning')
             return redirect(url_for('registrar'))
@@ -141,29 +139,35 @@ def registrar():
         return redirect(url_for('login'))
     return render_template('registrar.html')
 
+# --- ROTA DE RECUPERAÇÃO COM PROTEÇÃO DE MEMÓRIA ---
 @app.route('/recuperar', methods=['GET', 'POST'])
 def recuperar_senha():
     if request.method == 'POST':
         email = request.form.get('email')
-        print(f">>> TENTANDO RECUPERAR PARA: {email}") # LOG
-        user = User.query.filter_by(email=email).first()
-        if user:
-            token = serializer.dumps(email, salt='recuperar-senha')
-            link = url_for('resetar_senha_token', token=token, _external=True)
-            msg = Message('Recuperação de Senha', recipients=[email])
-            msg.body = f'Olá {user.username}, use o link para redefinir sua senha: {link}'
-            try:
-                print(">>> ENVIANDO E-MAIL VIA BREVO...") # LOG
-                mail.send(msg)
-                print(">>> E-MAIL ENVIADO COM SUCESSO!") # LOG
-                flash('E-mail de recuperação enviado!', 'success')
-            except Exception as ex:
-                print(f">>> ERRO CRÍTICO NO ENVIO: {str(ex)}") # LOG REAL
-                flash(f'Erro ao enviar e-mail: {str(ex)}', 'danger')
-            return redirect(url_for('login'))
+        print(f">>> POST recebido para: {email}") # LOG
         
-        print(">>> E-MAIL NÃO ENCONTRADO NO BANCO") # LOG
-        flash('E-mail não encontrado.', 'danger')
+        try:
+            user = User.query.filter_by(email=email).first()
+            if user:
+                token = serializer.dumps(email, salt='recuperar-senha')
+                link = url_for('resetar_senha_token', token=token, _external=True)
+                
+                msg = Message('Recuperação de Senha', recipients=[email])
+                msg.body = f'Olá {user.username},\n\nUse o link para redefinir sua senha: {link}\n\nO link expira em 1 hora.'
+                
+                print(">>> Tentando disparar SMTP via Brevo...") # LOG
+                mail.send(msg)
+                print(">>> E-MAIL DISPARADO COM SUCESSO!") # LOG
+                flash('E-mail de recuperação enviado!', 'success')
+                return redirect(url_for('login'))
+            else:
+                print(">>> E-mail não encontrado no banco de dados.") # LOG
+                flash('E-mail não encontrado.', 'danger')
+        except Exception as e:
+            print(f">>> ERRO CRÍTICO NO PROCESSO: {str(e)}") # LOG
+            flash(f'Erro técnico ao enviar: {str(e)}', 'danger')
+            db.session.rollback() # Previne travamento do banco
+            
     return render_template('recuperar.html')
 
 @app.route('/resetar-senha/<token>', methods=['GET', 'POST'])
