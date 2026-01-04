@@ -1,6 +1,9 @@
 import os
-from datetime import datetime, timedelta # Importação do timedelta é essencial
-from flask import Flask, render_template, request, redirect, url_for, flash, Markup
+from datetime import datetime, timedelta
+# CORREÇÃO AQUI: Removemos 'Markup' desta linha
+from flask import Flask, render_template, request, redirect, url_for, flash 
+# CORREÇÃO AQUI: Importamos 'Markup' diretamente do markupsafe
+from markupsafe import Markup 
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -40,11 +43,10 @@ class LoginHistory(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     data_acesso = db.Column(db.DateTime, default=datetime.now)
 
-# NOVO: Tabela para rastrear tentativas de login falhas
 class FailedLogin(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(30), nullable=False) # Quem tentou logar
-    timestamp = db.Column(db.DateTime, default=datetime.now) # Quando
+    username = db.Column(db.String(30), nullable=False)
+    timestamp = db.Column(db.DateTime, default=datetime.now)
 
 class User(UserMixin, db.Model): 
     id = db.Column(db.Integer, primary_key=True)
@@ -81,26 +83,23 @@ def home():
     usuarios = Usuario.query.all()
     return render_template('index.html', usuarios=usuarios)
 
-# --- LOGIN (ATUALIZADO COM LÓGICA DE 3 TENTATIVAS) ---
+# --- LOGIN (COM TRAVA DE 3 TENTATIVAS) ---
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
         
-        # 1. Limpeza: Remove registros de erros antigos (mais de 1 minuto)
-        # Isso evita que o banco fique cheio de lixo
+        # Limpeza de logs antigos
         um_minuto_atras = datetime.now() - timedelta(minutes=1)
         db.session.query(FailedLogin).filter(FailedLogin.timestamp < um_minuto_atras).delete()
         db.session.commit()
 
         user = User.query.filter_by(username=username).first()
         
-        # Se login for SUCESSO
+        # SUCESSO
         if user and user.check_password(password):
             login_user(user)
-            
-            # Limpa falhas desse usuário ao logar com sucesso
             db.session.query(FailedLogin).filter_by(username=username).delete()
             
             # Registra histórico
@@ -110,21 +109,19 @@ def login():
 
             return redirect(url_for('home'))
         
-        # Se login for FALHA (Senha errada ou usuário não existe)
+        # FALHA
         else:
-            # Registra a falha
             nova_falha = FailedLogin(username=username)
             db.session.add(nova_falha)
             db.session.commit()
 
-            # Conta falhas no último minuto para este usuário
             qtd_erros = FailedLogin.query.filter(
                 FailedLogin.username == username,
                 FailedLogin.timestamp >= um_minuto_atras
             ).count()
 
             if qtd_erros >= 3:
-                # Usa Markup para permitir HTML no flash (o link <a>)
+                # Aqui usamos o Markup importado corretamente do markupsafe
                 msg_erro = Markup(f"Muitas tentativas falhas. <a href='/recuperar' class='alert-link'>Esqueceu sua senha? Clique aqui para recuperar.</a>")
                 flash(msg_erro, 'danger')
             else:
@@ -138,7 +135,7 @@ def logout():
     logout_user()
     return redirect(url_for('home'))
 
-# --- ROTA DE RECUPERAÇÃO (SIMULAÇÃO) ---
+# --- RECUPERAÇÃO DE SENHA ---
 @app.route('/recuperar', methods=['GET', 'POST'])
 def recuperar_senha():
     if request.method == 'POST':
@@ -146,8 +143,6 @@ def recuperar_senha():
         user = User.query.filter_by(email=email).first()
         
         if user:
-            # Como não temos servidor de e-mail real configurado (SMTP),
-            # vamos apenas simular que enviamos.
             flash(f'Um link de redefinição foi enviado para {email} (Simulação).', 'success')
             return redirect(url_for('login'))
         else:
@@ -231,7 +226,7 @@ def delete(id):
 def setup_banco():
     db.drop_all()
     db.create_all()
-    return "Banco de dados limpo e recriado (Tabela de Falhas Adicionada)!"
+    return "Banco de dados limpo e recriado!"
 
 @app.route('/criar-admin')
 def criar_admin():
