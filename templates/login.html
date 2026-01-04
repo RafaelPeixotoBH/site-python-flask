@@ -13,9 +13,13 @@
                     <div class="card-body p-4">
                         <h3 class="text-center mb-4">Acesso Restrito</h3>
                         
-                        {% with messages = get_flashed_messages() %}
+                        {% with messages = get_flashed_messages(with_categories=true) %}
                         {% if messages %}
-                            <div class="alert alert-danger">{{ messages[0] }}</div>
+                            {% for category, message in messages %}
+                            <div class="alert alert-{{ category if category else 'danger' }}">
+                                {{ message | safe }}
+                            </div>
+                            {% endfor %}
                         {% endif %}
                         {% endwith %}
 
