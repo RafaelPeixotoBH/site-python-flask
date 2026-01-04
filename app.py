@@ -20,14 +20,12 @@ app.config['MAIL_PORT'] = int(os.environ.get('MAIL_PORT', 587))
 app.config['MAIL_USE_TLS'] = True
 app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME')
 app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD')
-
-# Garante que o remetente padrão seja o e-mail validado no Brevo
-app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('MAIL_DEFAULT_SENDER', app.config['MAIL_USERNAME'])
+app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('MAIL_DEFAULT_SENDER')
 
 mail = Mail(app)
 serializer = URLSafeTimedSerializer(app.config['SECRET_KEY'])
 
-# --- BANCO DE DADOS ---
+# --- BANCO DE DADOS (PostgreSQL ou SQLite) ---
 database_url = os.environ.get('DATABASE_URL')
 if database_url and database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
@@ -46,7 +44,8 @@ login_manager.login_view = 'login'
 def load_user(user_id):
     return User.query.get(int(user_id))
 
-# --- MODELOS ---
+# --- MODELOS (TABELAS) ---
+
 class Usuario(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     nome = db.Column(db.String(100), nullable=False)
@@ -59,7 +58,7 @@ class User(UserMixin, db.Model):
     password_hash = db.Column(db.String(256))
     is_admin = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.now)
-    historico_acessos = db.relationship('LoginHistory', backref='usuario', lazy=True)
+    historico_acessos = db.relationship('LoginHistory', backref='usuario', lazy=True, cascade="all, delete-orphan")
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -77,12 +76,13 @@ class FailedLogin(db.Model):
     username = db.Column(db.String(30), nullable=False)
     timestamp = db.Column(db.DateTime, default=datetime.now)
 
-# --- ROTAS ---
+# --- ROTAS PRINCIPAIS ---
+
 @app.route('/', methods=['GET', 'POST'])
 def home():
     if request.method == 'POST':
         if not current_user.is_authenticated:
-            flash('Faça login para adicionar nomes.')
+            flash('Faça login para adicionar nomes.', 'warning')
             return redirect(url_for('login'))
         nome_form = request.form.get('nome')
         if nome_form:
@@ -90,6 +90,7 @@ def home():
             db.session.add(novo_usuario)
             db.session.commit()
         return redirect(url_for('home'))
+    
     usuarios = Usuario.query.all()
     return render_template('index.html', usuarios=usuarios)
 
@@ -98,14 +99,16 @@ def login():
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
+        
+        # Limpeza de tentativas antigas
         um_minuto_atras = datetime.now() - timedelta(minutes=1)
-        db.session.query(FailedLogin).filter(FailedLogin.timestamp < um_minuto_atras).delete()
+        FailedLogin.query.filter(FailedLogin.timestamp < um_minuto_atras).delete()
         db.session.commit()
         
         user = User.query.filter_by(username=username).first()
         if user and user.check_password(password):
             login_user(user)
-            db.session.query(FailedLogin).filter_by(username=username).delete()
+            FailedLogin.query.filter_by(username=username).delete()
             novo_acesso = LoginHistory(user_id=user.id)
             db.session.add(novo_acesso)
             db.session.commit()
@@ -114,11 +117,12 @@ def login():
             nova_falha = FailedLogin(username=username)
             db.session.add(nova_falha)
             db.session.commit()
+            
             qtd_erros = FailedLogin.query.filter(FailedLogin.username == username, FailedLogin.timestamp >= um_minuto_atras).count()
             if qtd_erros >= 3:
-                msg_link = url_for('recuperar_senha')
-                msg_erro = Markup(f"Muitas tentativas. <a href='{msg_link}' class='alert-link'>Clique aqui para recuperar sua senha.</a>")
-                flash(msg_erro, 'danger')
+                link = url_for('recuperar_senha')
+                msg = Markup(f"Muitas tentativas. <a href='{link}' class='alert-link'>Clique aqui para recuperar sua senha.</a>")
+                flash(msg, 'danger')
             else:
                 flash('Login ou senha inválidos.', 'warning')
     return render_template('login.html')
@@ -138,14 +142,14 @@ def recuperar_senha():
             token = serializer.dumps(email, salt='recuperar-senha')
             link = url_for('resetar_senha_token', token=token, _external=True)
             msg = Message('Recuperação de Senha', recipients=[email])
-            msg.body = f'Olá {user.username},\n\nPara redefinir sua senha, clique no link abaixo:\n{link}\n\nO link expira em 1 hora.'
+            msg.body = f'Olá {user.username},\n\nClique no link para redefinir sua senha:\n{link}\n\nO link expira em 1 hora.'
             try:
                 mail.send(msg)
-                flash(f'Sucesso! E-mail enviado para {email}.', 'success')
+                flash(f'Sucesso! Instruções enviadas para {email}.', 'success')
             except Exception as e:
                 flash(f'Erro ao enviar e-mail: {str(e)}', 'danger')
             return redirect(url_for('login'))
-        flash('E-mail não cadastrado.', 'danger')
+        flash('E-mail não encontrado.', 'danger')
     return render_template('recuperar.html')
 
 @app.route('/resetar-senha/<token>', methods=['GET', 'POST'])
@@ -154,7 +158,8 @@ def resetar_senha_token(token):
         email = serializer.loads(token, salt='recuperar-senha', max_age=3600)
     except:
         flash('Link inválido ou expirado.', 'danger')
-        return redirect(url_for('login'))
+        return redirect(url_for('recuperar_senha'))
+    
     if request.method == 'POST':
         nova_senha = request.form.get('password')
         user = User.query.filter_by(email=email).first_or_404()
@@ -170,9 +175,11 @@ def registrar():
         username = request.form.get('username')
         email = request.form.get('email')
         password = request.form.get('password')
+        
         if User.query.filter_by(username=username).first():
             flash('Usuário já existe.', 'warning')
             return redirect(url_for('registrar'))
+        
         novo_user = User(username=username, email=email)
         novo_user.set_password(password)
         db.session.add(novo_user)
@@ -185,40 +192,44 @@ def registrar():
 @login_required
 def delete(id):
     if not current_user.is_admin:
-        flash("Permissão negada.", 'danger')
+        flash("Acesso negado.", 'danger')
         return redirect(url_for('home'))
     usuario = Usuario.query.get_or_404(id)
     db.session.delete(usuario)
     db.session.commit()
     return redirect(url_for('home'))
 
+# --- FERRAMENTAS DO SISTEMA ---
+
 @app.route('/setup-banco')
 def setup_banco():
     with app.app_context():
         db.drop_all()
         db.create_all()
-    return "Banco resetado!"
+    return "Banco de dados resetado com sucesso!"
 
 @app.route('/criar-admin')
 def criar_admin():
     if not User.query.filter_by(username='admin').first():
-        email_admin = app.config['MAIL_DEFAULT_SENDER'] or 'admin@admin.com'
+        # Busca o e-mail real das variáveis de ambiente
+        email_admin = os.environ.get('MAIL_DEFAULT_SENDER') or 'admin@admin.com'
+        
         admin = User(username='admin', email=email_admin, is_admin=True)
         admin.set_password('123')
         db.session.add(admin)
         db.session.commit()
-        return f"Admin criado! E-mail: {email_admin}"
-    return "Admin já existe."
+        return f"Admin criado! E-mail de login: {email_admin}"
+    return "O usuário Admin já existe."
 
 @app.route('/dashboard')
 @login_required
 def dashboard():
     if not current_user.is_admin:
-        flash("Acesso restrito.", 'danger')
+        flash("Acesso restrito a administradores.", 'danger')
         return redirect(url_for('home'))
-    total = User.query.count()
-    lista = User.query.all()
-    return render_template('dashboard.html', total=total, limite=100, porcentagem=total, lista=lista)
+    total_users = User.query.count()
+    lista_users = User.query.all()
+    return render_template('dashboard.html', total=total_users, lista=lista_users, limite=100)
 
 if __name__ == '__main__':
     with app.app_context():
