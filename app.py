@@ -1,12 +1,10 @@
-# --- PATCH DE REDE AVANÇADO (IPv4 Forçado) ---
-# Esse bloco obriga o Render a usar o caminho rápido (IPv4)
+# --- PATCH DE REDE OBRIGATÓRIO (IPv4) ---
 import socket
 orig_getaddrinfo = socket.getaddrinfo
 def getaddrinfo_ipv4(host, port, family=0, type=0, proto=0, flags=0):
-    # Força a família para AF_INET (IPv4)
     return orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
 socket.getaddrinfo = getaddrinfo_ipv4
-# ---------------------------------------------
+# ----------------------------------------
 
 import os
 from datetime import datetime, timedelta
@@ -24,23 +22,19 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'chave-secreta-mude-em-producao'
 basedir = os.path.abspath(os.path.dirname(__file__))
 
-# --- CONFIGURAÇÃO DE E-MAIL (MODO LEVE) ---
+# --- CONFIGURAÇÃO DE E-MAIL (MODO PERSISTENTE) ---
 app.config['MAIL_SERVER'] = 'smtp.gmail.com'
-app.config['MAIL_PORT'] = 587           # Voltamos para a porta padrão de nuvem
-app.config['MAIL_USE_TLS'] = True       # TLS Ligado
-app.config['MAIL_USE_SSL'] = False      # SSL Desligado
-app.config['MAIL_DEBUG'] = False        # Desligado para economizar memória e tempo
-app.config['MAIL_MAX_EMAILS'] = None
-app.config['MAIL_ASCII_ATTACHMENTS'] = False
-
+app.config['MAIL_PORT'] = 587             # Porta padrão TLS
+app.config['MAIL_USE_TLS'] = True         # Criptografia TLS
+app.config['MAIL_USE_SSL'] = False        # SSL desligado
 app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME')
 app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD')
 
-# Fallback para o remetente
-if app.config['MAIL_USERNAME']:
-    app.config['MAIL_DEFAULT_SENDER'] = ('Suporte Agenda', app.config['MAIL_USERNAME'])
-else:
-    app.config['MAIL_DEFAULT_SENDER'] = ('Suporte Agenda', 'noreply@agenda.com')
+# NOVAS CONFIGURAÇÕES PARA EVITAR TIMEOUT
+app.config['MAIL_ASCII_ATTACHMENTS'] = False
+app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('MAIL_USERNAME')
+# O segredo: Aumenta o tempo de espera da conexão para 60 segundos
+app.config['MAIL_CONNECT_TIMEOUT'] = 60   
 
 mail = Mail(app)
 serializer = URLSafeTimedSerializer(app.config['SECRET_KEY'])
@@ -164,9 +158,9 @@ def recuperar_senha():
         user = User.query.filter_by(email=email).first()
         
         if user:
-            # Verifica configuração
+            # Verifica variáveis
             if not app.config['MAIL_USERNAME'] or not app.config['MAIL_PASSWORD']:
-                flash('Erro Crítico: E-mail não configurado.', 'danger')
+                flash('Erro de Configuração: Variáveis de ambiente ausentes.', 'danger')
                 return redirect(url_for('login'))
 
             token = serializer.dumps(email, salt='recuperar-senha')
@@ -176,13 +170,16 @@ def recuperar_senha():
             msg.body = f'Olá {user.username},\n\nPara redefinir sua senha, clique no link abaixo:\n{link}\n\nO link expira em 1 hora.'
             
             try:
+                # Tenta enviar
                 mail.send(msg)
                 flash(f'Sucesso! Link enviado para {email}.', 'success')
             except Exception as e:
-                # Mantivemos a exibição do erro, mas agora em português claro
+                # Loga o erro no console do Render e mostra na tela
                 erro_txt = str(e)
-                print(f"ERRO EMAIL: {erro_txt}")
-                flash(f'O servidor demorou para responder. Erro: {erro_txt}', 'danger')
+                print(f"============== ERRO EMAIL ==============")
+                print(f"{erro_txt}")
+                print(f"========================================")
+                flash(f'Erro de conexão com o Gmail: {erro_txt}. Verifique se a conta Google bloqueou o acesso.', 'danger')
             
             return redirect(url_for('login'))
         else:
