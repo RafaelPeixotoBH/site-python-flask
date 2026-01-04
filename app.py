@@ -1,5 +1,5 @@
 # --- CORREÇÃO DE REDE (Force IPv4) ---
-# Mantemos isso pois é vital para o Render não se perder
+# Essencial para o Render funcionar com Gmail
 import socket
 def getaddrinfo(*args, **kwargs):
     responses = socket._getaddrinfo(*args, **kwargs)
@@ -24,16 +24,15 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'chave-secreta-mude-em-producao'
 basedir = os.path.abspath(os.path.dirname(__file__))
 
-# --- CONFIGURAÇÃO DE E-MAIL (MODIFICADO PARA PORTA 465/SSL) ---
+# --- CONFIGURAÇÃO DE E-MAIL (PADRÃO 587/TLS) ---
 app.config['MAIL_SERVER'] = 'smtp.gmail.com'
-
-# MUDANÇA AQUI: Trocamos 587 por 465 e ativamos SSL
-app.config['MAIL_PORT'] = 465
-app.config['MAIL_USE_TLS'] = False  # Desliga TLS
-app.config['MAIL_USE_SSL'] = True   # Liga SSL (Conexão Segura Direta)
-
+app.config['MAIL_PORT'] = 587
+app.config['MAIL_USE_TLS'] = True
+app.config['MAIL_USE_SSL'] = False
 app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME')
 app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD')
+app.config['MAIL_DEBUG'] = True # Ajuda a ver erros nos logs
+app.config['MAIL_MAX_EMAILS'] = None
 
 # Fallback para o remetente
 if app.config['MAIL_USERNAME']:
@@ -163,8 +162,9 @@ def recuperar_senha():
         user = User.query.filter_by(email=email).first()
         
         if user:
+            # Verifica se as variáveis existem
             if not app.config['MAIL_USERNAME'] or not app.config['MAIL_PASSWORD']:
-                flash('Erro Crítico: Servidor de e-mail não configurado.', 'danger')
+                flash('ERRO DE CONFIGURAÇÃO: Verifique as variáveis MAIL_USERNAME e MAIL_PASSWORD no Render.', 'danger')
                 return redirect(url_for('login'))
 
             token = serializer.dumps(email, salt='recuperar-senha')
@@ -177,10 +177,10 @@ def recuperar_senha():
                 mail.send(msg)
                 flash(f'Sucesso! Link enviado para {email}.', 'success')
             except Exception as e:
-                print(f"============== ERRO DE E-MAIL ==============")
-                print(f"ERRO: {str(e)}")
-                print(f"============================================")
-                flash(f'Falha ao enviar e-mail. Tente novamente mais tarde.', 'danger')
+                # AQUI ESTÁ O TRUQUE: Mostra o erro real na tela
+                erro_real = str(e)
+                print(f"ERRO EMAIL: {erro_real}")
+                flash(f'ERRO TÉCNICO: {erro_real}', 'danger')
             
             return redirect(url_for('login'))
         else:
@@ -276,7 +276,7 @@ def setup_banco():
     with app.app_context():
         db.drop_all()
         db.create_all()
-    return "Banco resetado com novas configurações!"
+    return "Banco resetado!"
 
 @app.route('/criar-admin')
 def criar_admin():
@@ -296,7 +296,7 @@ def dashboard():
         flash("Acesso restrito.", 'danger')
         return redirect(url_for('home'))
     total = User.query.count()
-    limite = 100
+    limite = 1000
     porcentagem = min((total / limite) * 100, 100)
     lista = User.query.all()
     return render_template('dashboard.html', total=total, limite=limite, porcentagem=porcentagem, lista=lista)
