@@ -9,7 +9,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from flask_mail import Mail, Message
 from itsdangerous import URLSafeTimedSerializer, SignatureExpired
 
-# --- CORREÇÃO DE REDE PARA O RENDER ---
+# --- CORREÇÃO DE REDE ---
 orig_getaddrinfo = socket.getaddrinfo
 def getaddrinfo_ipv4(host, port, family=0, type=0, proto=0, flags=0):
     return orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
@@ -17,11 +17,11 @@ socket.getaddrinfo = getaddrinfo_ipv4
 
 app = Flask(__name__)
 
-# --- CONFIGURAÇÕES GERAIS ---
+# --- CONFIGURAÇÕES ---
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'chave-secreta-mude-em-producao')
 basedir = os.path.abspath(os.path.dirname(__file__))
 
-# --- E-MAIL (BREVO / SMTP) ---
+# --- E-MAIL (BREVO) ---
 app.config['MAIL_SERVER'] = 'smtp-relay.brevo.com'
 app.config['MAIL_PORT'] = 587
 app.config['MAIL_USE_TLS'] = True
@@ -42,7 +42,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
 
-# --- LOGIN ---
+# --- LOGIN MANAGER ---
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
@@ -51,8 +51,7 @@ login_manager.login_view = 'login'
 def load_user(user_id):
     return User.query.get(int(user_id))
 
-# --- MODELOS (TABELAS) ---
-
+# --- MODELOS ---
 class Usuario(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     nome = db.Column(db.String(100), nullable=False)
@@ -65,7 +64,6 @@ class User(UserMixin, db.Model):
     password_hash = db.Column(db.String(256))
     is_admin = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.now)
-    # Relacionamento para o histórico de acessos
     acessos = db.relationship('LoginHistory', backref='dono', lazy=True, cascade="all, delete-orphan")
 
     def set_password(self, password):
@@ -109,9 +107,7 @@ def login():
         user = User.query.filter_by(username=username).first()
         if user and user.check_password(password):
             login_user(user)
-            # REGISTRA O ACESSO
-            novo_acesso = LoginHistory(user_id=user.id)
-            db.session.add(novo_acesso)
+            db.session.add(LoginHistory(user_id=user.id))
             db.session.commit()
             return redirect(url_for('home'))
         else:
@@ -135,9 +131,24 @@ def registrar():
         novo.set_password(p)
         db.session.add(novo)
         db.session.commit()
-        flash('Conta criada!', 'success')
         return redirect(url_for('login'))
     return render_template('registrar.html')
+
+# --- ESTA É A ROTA QUE O SEU HTML ESTAVA CHAMANDO (mudar_senha) ---
+@app.route('/mudar-senha', methods=['GET', 'POST'])
+@login_required
+def mudar_senha():
+    if request.method == 'POST':
+        atual = request.form.get('senha_atual')
+        nova = request.form.get('nova_senha')
+        if not current_user.check_password(atual):
+            flash('Senha atual incorreta.', 'danger')
+            return redirect(url_for('mudar_senha'))
+        current_user.set_password(nova)
+        db.session.commit()
+        flash('Senha alterada!', 'success')
+        return redirect(url_for('home'))
+    return render_template('mudar_senha.html')
 
 @app.route('/recuperar', methods=['GET', 'POST'])
 def recuperar_senha():
@@ -148,27 +159,37 @@ def recuperar_senha():
             if user:
                 token = serializer.dumps(email, salt='recuperar-senha')
                 link = url_for('resetar_senha_token', token=token, _external=True)
-                msg = Message('Recuperação de Senha', recipients=[email])
-                msg.body = f'Olá, redefina sua senha aqui: {link}'
+                msg = Message('Recuperação', recipients=[email])
+                msg.body = f'Link: {link}'
                 mail.send(msg)
                 flash('E-mail enviado!', 'success')
                 return redirect(url_for('login'))
             flash('E-mail não encontrado.', 'danger')
         except Exception as e:
-            flash(f'Erro de conexão: {str(e)}', 'danger')
+            flash(f'Erro: {str(e)}', 'danger')
     return render_template('recuperar.html')
+
+@app.route('/resetar-senha/<token>', methods=['GET', 'POST'])
+def resetar_senha_token(token):
+    try:
+        email = serializer.loads(token, salt='recuperar-senha', max_age=3600)
+    except:
+        flash('Link expirado.', 'danger')
+        return redirect(url_for('recuperar_senha'))
+    if request.method == 'POST':
+        user = User.query.filter_by(email=email).first_or_404()
+        user.set_password(request.form.get('password'))
+        db.session.commit()
+        return redirect(url_for('login'))
+    return render_template('resetar_token.html')
 
 @app.route('/dashboard')
 @login_required
 def dashboard():
     if not current_user.is_admin:
-        flash('Acesso negado.', 'danger')
         return redirect(url_for('home'))
-    
     usuarios = User.query.all()
-    # Pega os últimos 50 logins para exibir no painel
     historico = LoginHistory.query.order_by(LoginHistory.data_acesso.desc()).limit(50).all()
-    
     return render_template('dashboard.html', usuarios=usuarios, historico=historico)
 
 @app.route('/setup-banco')
@@ -176,7 +197,7 @@ def setup_banco():
     with app.app_context():
         db.drop_all()
         db.create_all()
-    return "Banco Resetado com Sucesso! Agora tudo deve funcionar."
+    return "Banco Resetado!"
 
 @app.route('/criar-admin')
 def criar_admin():
@@ -186,7 +207,7 @@ def criar_admin():
         adm.set_password('123')
         db.session.add(adm)
         db.session.commit()
-        return f"Admin criado: {email}"
+        return f"Admin criado!"
     return "Admin já existe."
 
 if __name__ == '__main__':
