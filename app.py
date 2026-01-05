@@ -9,7 +9,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from flask_mail import Mail, Message
 from itsdangerous import URLSafeTimedSerializer, SignatureExpired
 
-# --- CORREÇÃO DE REDE (Resolve o Erro 110/Timeout no Render) ---
+# --- CORREÇÃO DE REDE PARA O RENDER ---
 orig_getaddrinfo = socket.getaddrinfo
 def getaddrinfo_ipv4(host, port, family=0, type=0, proto=0, flags=0):
     return orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
@@ -17,11 +17,11 @@ socket.getaddrinfo = getaddrinfo_ipv4
 
 app = Flask(__name__)
 
-# --- CONFIGURAÇÕES ---
+# --- CONFIGURAÇÕES GERAIS ---
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'chave-secreta-mude-em-producao')
 basedir = os.path.abspath(os.path.dirname(__file__))
 
-# --- E-MAIL (BREVO) ---
+# --- E-MAIL (BREVO / SMTP) ---
 app.config['MAIL_SERVER'] = 'smtp-relay.brevo.com'
 app.config['MAIL_PORT'] = 587
 app.config['MAIL_USE_TLS'] = True
@@ -51,7 +51,8 @@ login_manager.login_view = 'login'
 def load_user(user_id):
     return User.query.get(int(user_id))
 
-# --- MODELOS (ESTRUTURA DO BANCO) ---
+# --- MODELOS (TABELAS) ---
+
 class Usuario(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     nome = db.Column(db.String(100), nullable=False)
@@ -64,7 +65,7 @@ class User(UserMixin, db.Model):
     password_hash = db.Column(db.String(256))
     is_admin = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.now)
-    # Relacionamento para o histórico de logins
+    # Relacionamento para o histórico de acessos
     acessos = db.relationship('LoginHistory', backref='dono', lazy=True, cascade="all, delete-orphan")
 
     def set_password(self, password):
@@ -105,11 +106,10 @@ def login():
     if request.method == 'POST':
         username = request.form.get('username')
         password = request.form.get('password')
-        
         user = User.query.filter_by(username=username).first()
         if user and user.check_password(password):
             login_user(user)
-            # REGISTRO DE ACESSO (O que estava faltando antes)
+            # REGISTRA O ACESSO
             novo_acesso = LoginHistory(user_id=user.id)
             db.session.add(novo_acesso)
             db.session.commit()
@@ -124,6 +124,21 @@ def logout():
     logout_user()
     return redirect(url_for('home'))
 
+@app.route('/registrar', methods=['GET', 'POST'])
+def registrar():
+    if request.method == 'POST':
+        u, e, p = request.form.get('username'), request.form.get('email'), request.form.get('password')
+        if User.query.filter_by(username=u).first():
+            flash('Usuário já existe.', 'warning')
+            return redirect(url_for('registrar'))
+        novo = User(username=u, email=e)
+        novo.set_password(p)
+        db.session.add(novo)
+        db.session.commit()
+        flash('Conta criada!', 'success')
+        return redirect(url_for('login'))
+    return render_template('registrar.html')
+
 @app.route('/recuperar', methods=['GET', 'POST'])
 def recuperar_senha():
     if request.method == 'POST':
@@ -134,13 +149,13 @@ def recuperar_senha():
                 token = serializer.dumps(email, salt='recuperar-senha')
                 link = url_for('resetar_senha_token', token=token, _external=True)
                 msg = Message('Recuperação de Senha', recipients=[email])
-                msg.body = f'Olá {user.username}, redefina sua senha aqui: {link}'
+                msg.body = f'Olá, redefina sua senha aqui: {link}'
                 mail.send(msg)
-                flash('E-mail enviado com sucesso!', 'success')
+                flash('E-mail enviado!', 'success')
                 return redirect(url_for('login'))
             flash('E-mail não encontrado.', 'danger')
         except Exception as e:
-            flash(f'Erro de conexão com servidor de e-mail: {str(e)}', 'danger')
+            flash(f'Erro de conexão: {str(e)}', 'danger')
     return render_template('recuperar.html')
 
 @app.route('/dashboard')
@@ -161,7 +176,7 @@ def setup_banco():
     with app.app_context():
         db.drop_all()
         db.create_all()
-    return "Banco Resetado e Tabelas de Histórico Criadas!"
+    return "Banco Resetado com Sucesso! Agora tudo deve funcionar."
 
 @app.route('/criar-admin')
 def criar_admin():
@@ -171,8 +186,8 @@ def criar_admin():
         adm.set_password('123')
         db.session.add(adm)
         db.session.commit()
-        return f"Admin criado com sucesso: {email}"
-    return "O usuário Admin já existe."
+        return f"Admin criado: {email}"
+    return "Admin já existe."
 
 if __name__ == '__main__':
     with app.app_context():
