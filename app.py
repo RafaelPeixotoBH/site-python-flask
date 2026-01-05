@@ -9,7 +9,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from flask_mail import Mail, Message
 from itsdangerous import URLSafeTimedSerializer, SignatureExpired
 
-# --- CORREÇÃO DE REDE ---
+# --- CORREÇÃO DE REDE PARA O RENDER ---
 orig_getaddrinfo = socket.getaddrinfo
 def getaddrinfo_ipv4(host, port, family=0, type=0, proto=0, flags=0):
     return orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
@@ -42,7 +42,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
 
-# --- LOGIN MANAGER ---
+# --- LOGIN ---
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
@@ -82,7 +82,7 @@ class FailedLogin(db.Model):
     username = db.Column(db.String(30), nullable=False)
     timestamp = db.Column(db.DateTime, default=datetime.now)
 
-# --- ROTAS ---
+# --- ROTAS PRINCIPAIS ---
 
 @app.route('/', methods=['GET', 'POST'])
 def home():
@@ -107,6 +107,7 @@ def login():
         user = User.query.filter_by(username=username).first()
         if user and user.check_password(password):
             login_user(user)
+            # REGISTRA ACESSO
             db.session.add(LoginHistory(user_id=user.id))
             db.session.commit()
             return redirect(url_for('home'))
@@ -134,7 +135,8 @@ def registrar():
         return redirect(url_for('login'))
     return render_template('registrar.html')
 
-# --- ESTA É A ROTA QUE O SEU HTML ESTAVA CHAMANDO (mudar_senha) ---
+# --- ROTAS DE SENHA (Sincronizadas com o HTML) ---
+
 @app.route('/mudar-senha', methods=['GET', 'POST'])
 @login_required
 def mudar_senha():
@@ -146,7 +148,7 @@ def mudar_senha():
             return redirect(url_for('mudar_senha'))
         current_user.set_password(nova)
         db.session.commit()
-        flash('Senha alterada!', 'success')
+        flash('Senha alterada com sucesso!', 'success')
         return redirect(url_for('home'))
     return render_template('mudar_senha.html')
 
@@ -159,14 +161,14 @@ def recuperar_senha():
             if user:
                 token = serializer.dumps(email, salt='recuperar-senha')
                 link = url_for('resetar_senha_token', token=token, _external=True)
-                msg = Message('Recuperação', recipients=[email])
-                msg.body = f'Link: {link}'
+                msg = Message('Recuperação de Senha', recipients=[email])
+                msg.body = f'Olá, use o link para redefinir sua senha: {link}'
                 mail.send(msg)
                 flash('E-mail enviado!', 'success')
                 return redirect(url_for('login'))
             flash('E-mail não encontrado.', 'danger')
         except Exception as e:
-            flash(f'Erro: {str(e)}', 'danger')
+            flash(f'Erro técnico: {str(e)}', 'danger')
     return render_template('recuperar.html')
 
 @app.route('/resetar-senha/<token>', methods=['GET', 'POST'])
@@ -174,14 +176,17 @@ def resetar_senha_token(token):
     try:
         email = serializer.loads(token, salt='recuperar-senha', max_age=3600)
     except:
-        flash('Link expirado.', 'danger')
+        flash('Link inválido ou expirado.', 'danger')
         return redirect(url_for('recuperar_senha'))
     if request.method == 'POST':
         user = User.query.filter_by(email=email).first_or_404()
         user.set_password(request.form.get('password'))
         db.session.commit()
+        flash('Senha redefinida!', 'success')
         return redirect(url_for('login'))
     return render_template('resetar_token.html')
+
+# --- ADMINISTRAÇÃO ---
 
 @app.route('/dashboard')
 @login_required
@@ -192,12 +197,21 @@ def dashboard():
     historico = LoginHistory.query.order_by(LoginHistory.data_acesso.desc()).limit(50).all()
     return render_template('dashboard.html', usuarios=usuarios, historico=historico)
 
+@app.route('/delete/<int:id>')
+@login_required
+def delete(id):
+    if current_user.is_admin:
+        u = Usuario.query.get_or_404(id)
+        db.session.delete(u)
+        db.session.commit()
+    return redirect(url_for('home'))
+
 @app.route('/setup-banco')
 def setup_banco():
     with app.app_context():
         db.drop_all()
         db.create_all()
-    return "Banco Resetado!"
+    return "Banco Resetado e Tabelas de Acesso Criadas!"
 
 @app.route('/criar-admin')
 def criar_admin():
@@ -207,7 +221,7 @@ def criar_admin():
         adm.set_password('123')
         db.session.add(adm)
         db.session.commit()
-        return f"Admin criado!"
+        return "Admin criado com sucesso!"
     return "Admin já existe."
 
 if __name__ == '__main__':
