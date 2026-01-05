@@ -9,7 +9,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from flask_mail import Mail, Message
 from itsdangerous import URLSafeTimedSerializer, SignatureExpired
 
-# --- CORREÇÃO DE REDE PARA O RENDER ---
+# --- CORREÇÃO DE REDE PARA O RENDER (FORÇAR IPv4) ---
 orig_getaddrinfo = socket.getaddrinfo
 def getaddrinfo_ipv4(host, port, family=0, type=0, proto=0, flags=0):
     return orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
@@ -21,7 +21,7 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'chave-secreta-mude-em-producao')
 basedir = os.path.abspath(os.path.dirname(__file__))
 
-# --- E-MAIL (BREVO) ---
+# --- E-MAIL (BREVO / SMTP) ---
 app.config['MAIL_SERVER'] = 'smtp-relay.brevo.com'
 app.config['MAIL_PORT'] = 587
 app.config['MAIL_USE_TLS'] = True
@@ -42,7 +42,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
 
-# --- LOGIN ---
+# --- LOGIN MANAGER ---
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
@@ -64,6 +64,7 @@ class User(UserMixin, db.Model):
     password_hash = db.Column(db.String(256))
     is_admin = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.now)
+    # Relacionamento para o histórico de acessos
     acessos = db.relationship('LoginHistory', backref='dono', lazy=True, cascade="all, delete-orphan")
 
     def set_password(self, password):
@@ -107,7 +108,7 @@ def login():
         user = User.query.filter_by(username=username).first()
         if user and user.check_password(password):
             login_user(user)
-            # REGISTRA ACESSO
+            # REGISTRA ACESSO (DATA E HORA)
             db.session.add(LoginHistory(user_id=user.id))
             db.session.commit()
             return redirect(url_for('home'))
@@ -132,10 +133,11 @@ def registrar():
         novo.set_password(p)
         db.session.add(novo)
         db.session.commit()
+        flash('Conta criada com sucesso!', 'success')
         return redirect(url_for('login'))
     return render_template('registrar.html')
 
-# --- ROTAS DE SENHA (Sincronizadas com o HTML) ---
+# --- ROTAS DE SENHA ---
 
 @app.route('/mudar-senha', methods=['GET', 'POST'])
 @login_required
@@ -192,9 +194,13 @@ def resetar_senha_token(token):
 @login_required
 def dashboard():
     if not current_user.is_admin:
+        flash('Acesso restrito.', 'danger')
         return redirect(url_for('home'))
+    
     usuarios = User.query.all()
+    # Pega os últimos 50 logins registrados no sistema
     historico = LoginHistory.query.order_by(LoginHistory.data_acesso.desc()).limit(50).all()
+    
     return render_template('dashboard.html', usuarios=usuarios, historico=historico)
 
 @app.route('/delete/<int:id>')
@@ -221,7 +227,7 @@ def criar_admin():
         adm.set_password('123')
         db.session.add(adm)
         db.session.commit()
-        return "Admin criado com sucesso!"
+        return "Admin criado com sucesso! Senha padrão: 123"
     return "Admin já existe."
 
 if __name__ == '__main__':
