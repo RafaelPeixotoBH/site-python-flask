@@ -9,7 +9,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from flask_mail import Mail, Message
 from itsdangerous import URLSafeTimedSerializer, SignatureExpired
 
-# --- 1. CORREÇÃO DE REDE (O QUE FOI ESQUECIDO) ---
+# --- CORREÇÃO DE REDE (Resolve o Erro 110/Timeout no Render) ---
 orig_getaddrinfo = socket.getaddrinfo
 def getaddrinfo_ipv4(host, port, family=0, type=0, proto=0, flags=0):
     return orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
@@ -51,7 +51,7 @@ login_manager.login_view = 'login'
 def load_user(user_id):
     return User.query.get(int(user_id))
 
-# --- MODELOS ---
+# --- MODELOS (ESTRUTURA DO BANCO) ---
 class Usuario(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     nome = db.Column(db.String(100), nullable=False)
@@ -64,7 +64,7 @@ class User(UserMixin, db.Model):
     password_hash = db.Column(db.String(256))
     is_admin = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.now)
-    # Relacionamento para contagem
+    # Relacionamento para o histórico de logins
     acessos = db.relationship('LoginHistory', backref='dono', lazy=True, cascade="all, delete-orphan")
 
     def set_password(self, password):
@@ -109,7 +109,7 @@ def login():
         user = User.query.filter_by(username=username).first()
         if user and user.check_password(password):
             login_user(user)
-            # REGISTRO DE ACESSO (O QUE FOI ESQUECIDO)
+            # REGISTRO DE ACESSO (O que estava faltando antes)
             novo_acesso = LoginHistory(user_id=user.id)
             db.session.add(novo_acesso)
             db.session.commit()
@@ -134,23 +134,24 @@ def recuperar_senha():
                 token = serializer.dumps(email, salt='recuperar-senha')
                 link = url_for('resetar_senha_token', token=token, _external=True)
                 msg = Message('Recuperação de Senha', recipients=[email])
-                msg.body = f'Olá {user.username}, use o link: {link}'
+                msg.body = f'Olá {user.username}, redefina sua senha aqui: {link}'
                 mail.send(msg)
                 flash('E-mail enviado com sucesso!', 'success')
                 return redirect(url_for('login'))
             flash('E-mail não encontrado.', 'danger')
         except Exception as e:
-            flash(f'Erro de conexão: {str(e)}', 'danger')
+            flash(f'Erro de conexão com servidor de e-mail: {str(e)}', 'danger')
     return render_template('recuperar.html')
 
 @app.route('/dashboard')
 @login_required
 def dashboard():
     if not current_user.is_admin:
+        flash('Acesso negado.', 'danger')
         return redirect(url_for('home'))
     
-    # DADOS PARA O DASHBOARD (O QUE FOI ESQUECIDO)
     usuarios = User.query.all()
+    # Pega os últimos 50 logins para exibir no painel
     historico = LoginHistory.query.order_by(LoginHistory.data_acesso.desc()).limit(50).all()
     
     return render_template('dashboard.html', usuarios=usuarios, historico=historico)
@@ -160,7 +161,7 @@ def setup_banco():
     with app.app_context():
         db.drop_all()
         db.create_all()
-    return "Banco Resetado com sucesso!"
+    return "Banco Resetado e Tabelas de Histórico Criadas!"
 
 @app.route('/criar-admin')
 def criar_admin():
@@ -170,8 +171,8 @@ def criar_admin():
         adm.set_password('123')
         db.session.add(adm)
         db.session.commit()
-        return f"Admin criado: {email}"
-    return "Admin já existe."
+        return f"Admin criado com sucesso: {email}"
+    return "O usuário Admin já existe."
 
 if __name__ == '__main__':
     with app.app_context():
